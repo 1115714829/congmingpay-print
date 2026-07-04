@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 按 Claude Design 设计稿(`50-80.zip` → `_design/58-80/project/打印服务器控制台.dc.html`)用**原生 Walk** 重构为「票据打印服务器 — 管理控制台」:
 
 - **左导航**(打印机 / 打印队列 / 系统设置)+ 内容区切换 + **底部状态栏**(`共 N 台 · N 在线 · N 任务进行中` + 临时消息)。
-- **打印机视图**:工具栏(新增/刷新/测试打印/打印样票/**JSON测试**〔填 JSON 单对象或数组,暂代 MQTT 直接打印,走 `api.Process`〕/属性/删除)+ 筛选(全部/58/80/在线)+ 搜索 + **卡片网格**(`ScrollView`+`Flow`,每卡:IP/USB名 · 状态〔彩色〕· 来源〔云端下发/手动增加〕· 队列〔N/空闲中·打印中〕· 底部设备名;单击选中高亮)。左侧导航与顶部/各页按钮统一样式(同高度 `btnHeight`)。
+- **打印机视图**:工具栏(新增/刷新/测试打印/打印样票/**JSON测试**〔填 JSON 单对象或数组,暂代 MQTT 直接打印,走 `api.Process`〕/属性/删除)+ 筛选(全部/58/80/在线)+ 搜索 + 多列 `TableView`(彩色状态列)。
 - **打印队列视图**:任务表(重新打印/取消/清除已完成),状态彩色。
 - **系统设置**:服务名/监听端口/默认纸张/失败自动重印 + **云端 MQTT**(broker/端口/用户/密码/主题) + 保存。
 - **新增打印机三步向导** + **属性对话框**。
@@ -69,9 +69,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **UI `internal/ui`**(Walk,按视图/职责拆文件):
   - `App.go` 外壳(窗口 + 左导航 ListBox + 内容页切换 + 状态栏)。
   - **状态监测 `StatusMonitor.go`——每台打印机一条后台持续 ping(等价 `ping -t`,独立通道)**:`syncMonitors()` 让监测与打印机列表对齐(缺的起、连接身份 `monSig`〔conn/ip/port/usbName〕变了停旧起新、删的停);`monitorLoop(snap, stop)` 每 `pingInterval`(1s)一次 `printsvc.Status(&snap)`(网口 `transport.QueryICMPPing`〔ICMP,不占 9100〕/ USB winspool),**不做防抖——超时即离线、通即在线**,仅状态标签变化时 `mw.Synchronize` 写 `printerModel.status[id]`+`refreshPrinters()`+记日志 `打印机状态: [id=…] 名称『…』addr → 标签(detail)`。`snap` 为起监测时的值拷贝(不读共享指针,避免与属性编辑竞态)。`Run` 启动 `syncMonitors()`、退出 `stopAllMonitors()`;增删/属性/云端同步后 `syncMonitors()`。**踩过的坑**:早先用"单定时器同步批量探测所有机",与真离线机(占满 1s 超时)并发会串扰、导致在线机瞬时误报离线——改成每台独立 ping 后消除。`statusInfo` 带 `detail`;`main` 启动打印机清单(含 ID)落日志。
-  - `Tables.go` `JobModel`(队列 `TableView` 模型,embed `walk.TableModelBase`,`StyleCell` 状态上色)+ `statusInfo`/`statusInfoFor`/配色。
-  - **打印机视图改卡片**:`PrinterCards.go`——`ScrollView{Layout:Flow}` 容器 `cardsView`,每台一张 `Composite`(Border,5 个 Label:IP/状态/来源/队列/名称,`OnMouseDown` 选中)。`refreshCards`:ID 集合变→`rebuildCards`(`declarative.NewBuilder(cardsView)` 动态建卡),没变→就地 `SetText/SetTextColor/SetBackground`(不闪)。状态存 `App.pstatus`(监测经 Synchronize 写)、队列来自 `svc.PrinterQueue(id)`、来源 `Printer.Source`。选中态 `App.selectedID`+浅蓝背景高亮;`selectedPrinter()` 按 `selectedID` 从 `cfg` 取。
-  - `PrintersView.go`(工具栏+筛选+卡片刷新)/ `JobsView.go` / `SettingsView.go` 视图 + 事件。
+  - `Tables.go` 两个 `TableView` 模型(`PrinterModel`/`JobModel`,embed `walk.TableModelBase`,`StyleCell` 给状态列上色,颜色 = 设计稿配色)。
+  - `PrintersView.go` / `JobsView.go` / `SettingsView.go` 三个视图 + 事件。
   - `AddWizard.go` 三步向导(`Dialog.Create` → `update()` 切步 → `dlg.Run()`)、`Properties.go` 属性对话框。
   - `Tray.go` 托盘、`Icon.go` 图标。
   - 坑:`Dialog{}.Run(owner)` 返回 `(int, error)`;`WidgetBase.SetVisible` 无返回值。

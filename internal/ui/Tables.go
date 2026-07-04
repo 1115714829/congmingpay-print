@@ -38,6 +38,55 @@ func statusInfoFor(st transport.PrinterStatus) statusInfo {
 	}
 }
 
+// PrinterModel 是打印机列表的 TableView 模型。
+type PrinterModel struct {
+	walk.TableModelBase
+	items  []*model.Printer
+	status map[string]statusInfo
+}
+
+func newPrinterModel() *PrinterModel {
+	return &PrinterModel{status: map[string]statusInfo{}}
+}
+
+func (m *PrinterModel) RowCount() int { return len(m.items) }
+
+func (m *PrinterModel) Value(row, col int) interface{} {
+	p := m.items[row]
+	switch col {
+	case 0:
+		return p.Name
+	case 1:
+		return p.BrandLabel()
+	case 2:
+		return p.WidthLabel()
+	case 3:
+		return p.ConnLabel()
+	case 4:
+		return p.Address()
+	case 5:
+		return m.info(p).label
+	case 6:
+		return p.LastPrint
+	}
+	return ""
+}
+
+func (m *PrinterModel) info(p *model.Printer) statusInfo {
+	if s, ok := m.status[p.ID]; ok {
+		return s
+	}
+	return statusInfo{"—", colGray, ""}
+}
+
+// StyleCell 给「状态」列上色。
+func (m *PrinterModel) StyleCell(style *walk.CellStyle) {
+	if style.Col() != 5 || style.Row() < 0 || style.Row() >= len(m.items) {
+		return
+	}
+	style.TextColor = m.info(m.items[style.Row()]).color
+}
+
 // JobModel 是打印队列的 TableView 模型。
 type JobModel struct {
 	walk.TableModelBase

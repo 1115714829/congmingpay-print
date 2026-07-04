@@ -16,9 +16,9 @@ func (a *App) jobsPageWidget() Composite {
 			Composite{
 				Layout: HBox{Margins: Margins{Left: 6, Top: 4, Right: 6, Bottom: 4}, Spacing: 4},
 				Children: []Widget{
-					PushButton{Text: "重新打印", MinSize: Size{Height: btnHeight}, Font: btnFont, OnClicked: a.onRetryJob},
-					PushButton{Text: "取消", MinSize: Size{Height: btnHeight}, Font: btnFont, OnClicked: a.onCancelJob},
-					PushButton{Text: "清除已完成", MinSize: Size{Height: btnHeight}, Font: btnFont, OnClicked: a.onClearDone},
+					PushButton{Text: "重新打印", OnClicked: a.onRetryJob},
+					PushButton{Text: "取消", OnClicked: a.onCancelJob},
+					PushButton{Text: "清除已完成", OnClicked: a.onClearDone},
 					HSpacer{},
 				},
 			},

@@ -276,24 +276,6 @@ func (s *Service) ClearDone() {
 	s.fireNotify()
 }
 
-// PrinterQueue 返回某台打印机进行中的任务数(排队/打印中/等待重试)与是否有正在打印的任务(供卡片显示)。
-func (s *Service) PrinterQueue(printerID string) (active int, printing bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, e := range s.entries {
-		if e.job.PrinterID != printerID {
-			continue
-		}
-		if e.job.Status.Active() {
-			active++
-		}
-		if e.job.Status == model.JobPrinting {
-			printing = true
-		}
-	}
-	return active, printing
-}
-
 // NudgeOnline 在监测到某台打印机上线时调用:立即唤醒它所有「等待重试」的任务马上打,不等退避。
 // 与自动重打(退避)互为兜底——监测漏了还有退避,监测到了就秒打。
 func (s *Service) NudgeOnline(printerID string) {

@@ -49,7 +49,7 @@ func (a *App) settingsPageWidget() Composite {
 			},
 			Composite{
 				Layout:   HBox{},
-				Children: []Widget{HSpacer{}, PushButton{Text: "保存设置", MinSize: Size{Height: btnHeight}, Font: btnFont, OnClicked: a.onSaveSettings}},
+				Children: []Widget{HSpacer{}, PushButton{Text: "保存设置", OnClicked: a.onSaveSettings}},
 			},
 			VSpacer{},
 		},

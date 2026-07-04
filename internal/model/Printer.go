@@ -24,12 +24,6 @@ const (
 // Brands 是下拉可选品牌顺序。
 var Brands = []Brand{BrandGprinter, BrandFeie, BrandOther}
 
-// 打印机来源:如何进入本地列表的。
-const (
-	SourceManual = "手动增加" // 向导手动新增
-	SourceCloud  = "云端下发" // 随打印自动登记 / /api/printers 同步
-)
-
 // BrandForIndex 按下拉索引返回品牌,越界回退佳博。
 func BrandForIndex(i int) Brand {
 	if i < 0 || i >= len(Brands) {
@@ -64,16 +58,7 @@ type Printer struct {
 	CutDisabled   bool   `json:"cutDisabled"` // true=不切纸(该机无切刀);反向字段,默认 false=启用切刀
 	NoRetry       bool   `json:"noRetry"`     // true=失败不重打;反向字段,默认 false=开启重打
 	RetryMax      int    `json:"retryMax"`    // 重打次数;≤0 视为 1
-	Source        string `json:"source"`      // 来源:SourceManual / SourceCloud
 	LastPrint     string `json:"lastPrint"`
-}
-
-// SourceLabel 返回来源展示文本(空→手动增加,兼容旧配置)。
-func (p *Printer) SourceLabel() string {
-	if p.Source == "" {
-		return SourceManual
-	}
-	return p.Source
 }
 
 // Cuts 返回是否在打印末尾切纸(反向字段保证旧配置默认切纸)。

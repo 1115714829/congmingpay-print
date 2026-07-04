@@ -123,9 +123,6 @@ func (c *Config) UpsertPrinter(in *model.Printer) (*model.Printer, bool) {
 	if in.Conn == model.ConnNetwork && in.Port == "" {
 		in.Port = "9100"
 	}
-	if in.Source == "" {
-		in.Source = model.SourceCloud
-	}
 	if in.LastPrint == "" {
 		in.LastPrint = "云端下发"
 	}

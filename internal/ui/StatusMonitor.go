@@ -73,7 +73,7 @@ func (a *App) monitorLoop(snap model.Printer, stop <-chan struct{}) {
 			last = info.label
 			ic := info
 			a.mw.Synchronize(func() {
-				a.pstatus[snap.ID] = ic
+				a.printerModel.status[snap.ID] = ic
 				a.refreshPrinters()
 				logger.Infof("打印机状态: [id=%s] 名称『%s』%s → %s(%s)", snap.ID, snap.Name, snap.Address(), ic.label, ic.detail)
 			})

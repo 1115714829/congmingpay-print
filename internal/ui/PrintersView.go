@@ -14,9 +14,6 @@ import (
 )
 
 func (a *App) printersPageWidget() Composite {
-	tb := func(text string, h func()) PushButton {
-		return PushButton{Text: text, MinSize: Size{Height: btnHeight}, Font: btnFont, OnClicked: h}
-	}
 	return Composite{
 		AssignTo: &a.printersPage,
 		Layout:   VBox{MarginsZero: true, SpacingZero: true},
@@ -24,13 +21,13 @@ func (a *App) printersPageWidget() Composite {
 			Composite{
 				Layout: HBox{Margins: Margins{Left: 6, Top: 4, Right: 6, Bottom: 4}, Spacing: 4},
 				Children: []Widget{
-					tb("新增打印机", a.onAddPrinter),
-					tb("刷新", a.onRefreshPrinters),
-					tb("测试打印", a.onTestPrint),
-					tb("打印样票", a.onSampleLayout),
-					tb("JSON测试", a.onJSONTest),
-					tb("属性", a.onProperties),
-					tb("删除", a.onDeletePrinter),
+					PushButton{Text: "新增打印机", OnClicked: a.onAddPrinter},
+					PushButton{Text: "刷新", OnClicked: a.onRefreshPrinters},
+					PushButton{Text: "测试打印", OnClicked: a.onTestPrint},
+					PushButton{Text: "打印样票", OnClicked: a.onSampleLayout},
+					PushButton{Text: "JSON测试", OnClicked: a.onJSONTest},
+					PushButton{Text: "属性", OnClicked: a.onProperties},
+					PushButton{Text: "删除", OnClicked: a.onDeletePrinter},
 					HSpacer{},
 					Label{Text: "筛选:"},
 					ComboBox{
@@ -50,24 +47,51 @@ func (a *App) printersPageWidget() Composite {
 					},
 				},
 			},
-			ScrollView{
-				AssignTo:        &a.cardsView,
-				HorizontalFixed: true,
-				Layout:          Flow{Margins: Margins{Left: 8, Top: 8, Right: 8, Bottom: 8}, Spacing: 8},
+			TableView{
+				AssignTo:        &a.printerTV,
+				Model:           a.printerModel,
+				StyleCell:       a.printerModel.StyleCell,
+				OnItemActivated: a.onProperties,
+				Columns: []TableViewColumn{
+					{Title: "名称", Width: 150},
+					{Title: "品牌", Width: 70},
+					{Title: "规格", Width: 60},
+					{Title: "连接", Width: 60},
+					{Title: "地址 / 设备", Width: 160},
+					{Title: "状态", Width: 80},
+					{Title: "最近活动", Width: 100},
+				},
 			},
 		},
 	}
 }
 
 func (a *App) selectedPrinter() *model.Printer {
-	if a.selectedID == "" {
+	i := a.printerTV.CurrentIndex()
+	if i < 0 || i >= len(a.printerModel.items) {
 		return nil
 	}
-	return a.cfg.FindPrinter(a.selectedID)
+	return a.printerModel.items[i]
 }
 
-// refreshPrinters 刷新打印机卡片(卡片实现见 PrinterCards.go)。
-func (a *App) refreshPrinters() { a.refreshCards() }
+func (a *App) refreshPrinters() {
+	// 记住当前选中,刷新后恢复(PublishRowsReset 会清空选择)
+	selID := ""
+	if p := a.selectedPrinter(); p != nil {
+		selID = p.ID
+	}
+	a.printerModel.items = a.filteredPrinters()
+	a.printerModel.PublishRowsReset()
+	a.updateStatusBar()
+	if selID != "" && a.printerTV != nil {
+		for i, p := range a.printerModel.items {
+			if p.ID == selID {
+				_ = a.printerTV.SetCurrentIndex(i)
+				break
+			}
+		}
+	}
+}
 
 func (a *App) filteredPrinters() []*model.Printer {
 	filter := 0
@@ -79,7 +103,7 @@ func (a *App) filteredPrinters() []*model.Printer {
 		query = strings.ToLower(strings.TrimSpace(a.searchLE.Text()))
 	}
 	var out []*model.Printer
-	for _, p := range a.cfg.PrinterList() {
+	for _, p := range a.cfg.Printers {
 		switch filter {
 		case 1:
 			if p.Width != 58 {
@@ -90,7 +114,7 @@ func (a *App) filteredPrinters() []*model.Printer {
 				continue
 			}
 		case 3:
-			if s, ok := a.pstatus[p.ID]; !ok || s.label != "就绪" {
+			if s, ok := a.printerModel.status[p.ID]; !ok || s.label != "就绪" {
 				continue
 			}
 		}

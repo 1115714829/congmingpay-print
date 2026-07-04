@@ -34,15 +34,11 @@ type App struct {
 	statusText *walk.Label
 	statusMsg  *walk.Label
 
-	// 打印机视图(卡片网格)
-	cardsView  *walk.ScrollView
-	cards      map[string]*printerCard // 按打印机 ID
-	cardOrder  []string                // 当前卡片顺序(判定集合是否变化)
-	selectedID string                  // 选中的打印机 ID
-	pstatus    map[string]statusInfo   // 各机在线状态(UI 线程访问;监测经 Synchronize 写)
-	cardBrushNormal, cardBrushSel *walk.SolidColorBrush
-	filterCB   *walk.ComboBox
-	searchLE   *walk.LineEdit
+	// 打印机视图
+	printerTV    *walk.TableView
+	printerModel *PrinterModel
+	filterCB     *walk.ComboBox
+	searchLE     *walk.LineEdit
 
 	// 队列视图
 	jobTV    *walk.TableView
@@ -69,10 +65,8 @@ type App struct {
 func NewApp(cfg *config.Config, cfgPath string, svc *printsvc.Service, srv *api.Server) *App {
 	return &App{
 		cfg: cfg, cfgPath: cfgPath, svc: svc, srv: srv,
-		jobModel: newJobModel(),
+		printerModel: newPrinterModel(), jobModel: newJobModel(),
 		monitors: map[string]*monitorHandle{},
-		cards:    map[string]*printerCard{},
-		pstatus:  map[string]statusInfo{},
 	}
 }
 
@@ -95,9 +89,9 @@ func (a *App) Run() error {
 						MaxSize: Size{Width: 150},
 						Layout:  VBox{Margins: Margins{Left: 8, Top: 8, Right: 8, Bottom: 8}, Spacing: 6},
 						Children: []Widget{
-							PushButton{AssignTo: &a.navPrinters, Text: "打印机", MinSize: Size{Height: btnHeight}, Font: btnFont, OnClicked: func() { a.showPage(0) }},
-							PushButton{AssignTo: &a.navJobs, Text: "打印队列", MinSize: Size{Height: btnHeight}, Font: btnFont, OnClicked: func() { a.showPage(1) }},
-							PushButton{AssignTo: &a.navSettings, Text: "系统设置", MinSize: Size{Height: btnHeight}, Font: btnFont, OnClicked: func() { a.showPage(2) }},
+							PushButton{AssignTo: &a.navPrinters, Text: "打印机", MinSize: Size{Height: 40}, OnClicked: func() { a.showPage(0) }},
+							PushButton{AssignTo: &a.navJobs, Text: "打印队列", MinSize: Size{Height: 40}, OnClicked: func() { a.showPage(1) }},
+							PushButton{AssignTo: &a.navSettings, Text: "系统设置", MinSize: Size{Height: 40}, OnClicked: func() { a.showPage(2) }},
 							VSpacer{},
 						},
 					},
@@ -124,11 +118,11 @@ func (a *App) Run() error {
 		logger.Errorf("托盘初始化失败: %v", err)
 	}
 
-	// 任务状态变化 → marshal 回 UI 线程刷新队列表 + 卡片队列信息
+	// 任务状态变化 → marshal 回 UI 线程刷新
 	a.svc.SetNotify(func() {
 		a.mw.Synchronize(func() {
 			a.refreshJobs()
-			a.refreshCards()
+			a.updateStatusBar()
 		})
 	})
 
@@ -191,7 +185,7 @@ func (a *App) updateStatusBar() {
 	total := len(a.cfg.Printers)
 	online := 0
 	for _, p := range a.cfg.Printers {
-		if s, ok := a.pstatus[p.ID]; ok && s.label == "就绪" {
+		if s, ok := a.printerModel.status[p.ID]; ok && s.label == "就绪" {
 			online++
 		}
 	}

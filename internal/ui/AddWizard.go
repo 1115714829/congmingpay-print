@@ -181,7 +181,6 @@ func (a *App) runAddWizard() *model.Printer {
 		Conn:          form.conn,
 		BuzzerEnabled: outBuzzer,
 		CutDisabled:   !outCut,
-		Source:        model.SourceManual,
 		LastPrint:     "刚刚添加",
 	}
 	if form.conn == model.ConnNetwork {
