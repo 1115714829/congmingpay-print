@@ -1,0 +1,42 @@
+# congmingpay release build: 32-bit single exe compatible with Windows 7 -> 11.
+#
+# IMPORTANT: must build with the go1.20.14 toolchain (the last Go that supports Win7).
+# Building with a newer Go (even if go.mod says "go 1.20") yields a binary that will
+# NOT start on Windows 7. This script pins the go1.20.14 toolchain explicitly.
+$ErrorActionPreference = 'Stop'
+Set-Location -Path $PSScriptRoot
+
+$go = Join-Path $env:USERPROFILE 'go\bin\go1.20.14.exe'
+if (-not (Test-Path $go)) {
+    Write-Error "go1.20.14 not found. Run: go install golang.org/dl/go1.20.14@latest ; go1.20.14 download"
+}
+
+# Generate Windows resources: embed manifest (comctl32 v6 theme + asInvoker + Win7 compat).
+# Without the comctl32 v6 manifest, Walk crashes at startup (TTM_ADDTOOL failed).
+$rsrc = Join-Path $env:USERPROFILE 'go\bin\rsrc.exe'
+if (-not (Test-Path $rsrc)) {
+    Write-Host "Installing rsrc ..."
+    & go install github.com/akavel/rsrc@latest
+}
+# Name it *_windows_386.syso so it is only linked for GOARCH=386 (keeps other arches clean).
+& $rsrc -arch 386 -manifest app.manifest -o rsrc_windows_386.syso
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path rsrc_windows_386.syso)) {
+    Write-Error "rsrc failed (exit=$LASTEXITCODE)."
+}
+
+# Refresh Swagger spec from annotations (swag CLI runs on dev Go). Keep only swagger.json:
+# the generated docs.go targets a newer swag lib and would break the go1.20 build, so delete it.
+$swag = Join-Path $env:USERPROFILE 'go\bin\swag.exe'
+if (Test-Path $swag) {
+    & $swag init -g internal/api/Server.go -o internal/api/docs --parseInternal 2>$null | Out-Null
+    Remove-Item internal\api\docs\docs.go, internal\api\docs\swagger.yaml -ErrorAction SilentlyContinue
+}
+
+# 32-bit, no console window, pure Go (no CGO).
+$env:GOOS = 'windows'
+$env:GOARCH = '386'
+$env:CGO_ENABLED = '0'
+& $go build -ldflags "-H windowsgui -s -w" -o congmingpay.exe .
+if ($LASTEXITCODE -ne 0) { Write-Error "go build failed (exit=$LASTEXITCODE)." }
+
+Write-Host "Build OK: congmingpay.exe (GOARCH=386, go1.20.14)"

@@ -1,0 +1,163 @@
+============================================================
+ 聪明付 · JSON 测试样例(粘进「JSON测试」框用)
+============================================================
+
+用法
+- 每段中两行箭头标记之间(↓ 与 ↑)就是可复制的 JSON:选中它,复制,
+  粘到打印机页「JSON测试」框,点「打印」。
+- 目标(二选一):
+    · "printer":{"name":"飞蛾1","ip":"192.168.68.128","brand":"飞蛾","width":80}
+        → 带身份的对象;这台没添加过会【自动新增进打印机列表】再打印(已存在则只用不改)
+    · "printer":"飞蛾1"        → 打到已注册的这台(按名称/ID)
+    · "gateway":"192.168.68.128" → 只给 IP;没添加过也会自动新增(名字就用 IP)
+    · 都不写 → 打到列表里当前选中的那台
+- 【必填五字段,缺一即被拒(无降级)】:
+    "buzzer"(蜂鸣 0关1开)、"cut"(切刀 0关1开)、"retry"(重试次数,0不重试)、
+    "headLines"(头部空行,0=默认)、"tailLines"(尾部空行,0=默认)。
+- 这五个字段 + printer 身份(name/brand/width)会【覆盖并持久化】到目标打印机(以云端为准,
+  属性页同步显示;本地手动改的会被下一条打印覆盖)。
+- 纸宽:"pWidth" 填 58 或 80,按你机器改(飞蛾/佳博通用)。
+- 多台:最外层是数组 [ ... ],每台一个 { }。并发打印;某台连不上只会自己
+  进「等待重试」,不影响其它台。
+- "id":每张票尽量唯一(真实 MQTT/API 用它防重打;JSON测试框里不参与防重)。
+
+
+------------------------------------------------------------
+【段1】单台 + 自动新增打印机(飞蛾1 / 192.168.68.128 / 80mm)
+       打完去「打印机」列表看,会多出一台「飞蛾1」
+------------------------------------------------------------
+复制这段↓
+{
+  "printer": {"name":"飞蛾1","ip":"192.168.68.128","brand":"飞蛾","width":80},
+  "id": 6812801,
+  "type": 5,
+  "pWidth": 80,
+  "pCopy": 1,
+  "buzzer": 1, "cut": 1, "retry": 1, "headLines": 0, "tailLines": 0,
+  "contents": [
+    {"size":"22","bold":true,"type":"text","align":"center","cont":"一菜一切(合并)"},
+    {"size":"11","bold":true,"type":"text","align":"center","cont":"(面点)"},
+    {"size":"11","type":"text","align":"center","cont":"【堂食】"},
+    {"size":"11","type":"text","cont":"桌号：A08"},
+    {"type":"text","cont":"商户名称：谷养元"},
+    {"type":"text","cont":"订单编号：10132607031628482179225"},
+    {"type":"text","cont":"下单时间：2026-07-04 12:00:00"},
+    {"type":"div_line"},
+    {"size":"11","bold":true,"type":"text","cont":"备注："},
+    {"type":"div_line"},
+    {"size":"11","tbody":[["1.手工猪肉大葱小笼包（3个）","1笼"]],"thead":{"商品名称":"85%","数量":"15%"}},
+    {"type":"div_line"},
+    {"size":"11","bold":true,"type":"text","align":"right","cont":"总计：1件"},
+    {"type":"text"},
+    {"type":"text"}
+  ]
+}
+↑到这里
+
+
+------------------------------------------------------------
+【段2】三台同时打印 + 自动新增(飞蛾1/2/3,80mm)
+       打完列表里会多出「飞蛾1」「飞蛾2」「飞蛾3」
+------------------------------------------------------------
+复制这段↓
+[
+  {
+    "printer": {"name":"飞蛾1","ip":"192.168.68.128","brand":"飞蛾","width":80},
+    "id": 6812802,
+    "type": 5,
+    "pWidth": 80,
+    "pCopy": 1,
+    "buzzer": 1, "cut": 1, "retry": 1, "headLines": 0, "tailLines": 0,
+    "contents": [
+      {"size":"22","bold":true,"type":"text","align":"center","cont":"一菜一切(合并)"},
+      {"size":"11","type":"text","align":"center","cont":"【堂食】"},
+      {"size":"11","type":"text","cont":"桌号：A08"},
+      {"type":"text","cont":"商户名称：谷养元"},
+      {"type":"text","cont":"订单编号：10132607031628482179225"},
+      {"type":"text","cont":"下单时间：2026-07-04 12:00:00"},
+      {"type":"div_line"},
+      {"size":"11","tbody":[["1.手工猪肉大葱小笼包（3个）","1笼"]],"thead":{"商品名称":"85%","数量":"15%"}},
+      {"type":"div_line"},
+      {"size":"11","bold":true,"type":"text","align":"right","cont":"总计：1件"},
+      {"type":"text"}
+    ]
+  },
+  {
+    "printer": {"name":"飞蛾2","ip":"192.168.68.178","brand":"飞蛾","width":80},
+    "id": 6825202,
+    "type": 5,
+    "pWidth": 80,
+    "pCopy": 1,
+    "buzzer": 1, "cut": 1, "retry": 1, "headLines": 0, "tailLines": 0,
+    "contents": [
+      {"size":"22","bold":true,"type":"text","align":"center","cont":"一菜一切(合并)"},
+      {"size":"11","type":"text","align":"center","cont":"【堂食】"},
+      {"size":"11","type":"text","cont":"桌号：A09"},
+      {"type":"text","cont":"商户名称：谷养元"},
+      {"type":"text","cont":"订单编号：10132607031628482179225"},
+      {"type":"text","cont":"下单时间：2026-07-04 12:00:00"},
+      {"type":"div_line"},
+      {"size":"11","tbody":[["1.手工猪肉大葱小笼包（3个）","1笼"]],"thead":{"商品名称":"85%","数量":"15%"}},
+      {"type":"div_line"},
+      {"size":"11","bold":true,"type":"text","align":"right","cont":"总计：1件"},
+      {"type":"text"}
+    ]
+  },
+  {
+    "printer": {"name":"飞蛾3","ip":"192.168.68.252","brand":"飞蛾","width":80},
+    "id": 6828202,
+    "type": 5,
+    "pWidth": 80,
+    "pCopy": 1,
+    "buzzer": 1, "cut": 1, "retry": 1, "headLines": 0, "tailLines": 0,
+    "contents": [
+      {"size":"22","bold":true,"type":"text","align":"center","cont":"一菜一切(合并)"},
+      {"size":"11","type":"text","align":"center","cont":"【堂食】"},
+      {"size":"11","type":"text","cont":"桌号：A10"},
+      {"type":"text","cont":"商户名称：谷养元"},
+      {"type":"text","cont":"订单编号：10132607031628482179225"},
+      {"type":"text","cont":"下单时间：2026-07-04 12:00:00"},
+      {"type":"div_line"},
+      {"size":"11","tbody":[["1.手工猪肉大葱小笼包（3个）","1笼"]],"thead":{"商品名称":"85%","数量":"15%"}},
+      {"type":"div_line"},
+      {"size":"11","bold":true,"type":"text","align":"right","cont":"总计：1件"},
+      {"type":"text"}
+    ]
+  }
+]
+↑到这里
+
+
+------------------------------------------------------------
+【段3】只给 gateway(IP)、不带名字(58mm)
+       会自动新增一台,名字就用 IP「192.168.68.128」
+------------------------------------------------------------
+复制这段↓
+{
+  "gateway": "192.168.68.128",
+  "id": 6812858,
+  "type": 5,
+  "pWidth": 58,
+  "pCopy": 1,
+  "buzzer": 1, "cut": 1, "retry": 1, "headLines": 0, "tailLines": 0,
+  "contents": [
+    {"size":"11","bold":true,"type":"text","align":"center","cont":"一菜一切(合并)"},
+    {"size":"11","type":"text","align":"center","cont":"【堂食】"},
+    {"type":"text","cont":"桌号：A08"},
+    {"type":"div_line"},
+    {"size":"11","tbody":[["1.手工猪肉大葱小笼包（3个）","1笼"]],"thead":{"商品名称":"75%","数量":"25%"}},
+    {"type":"div_line"},
+    {"size":"11","bold":true,"type":"text","align":"right","cont":"总计：1件"}
+  ]
+}
+↑到这里
+
+
+============================================================
+ 附:一次性下发打印机清单(这不是「JSON测试」框,是另一个接口)
+============================================================
+如果想一次登记多台(不随打印),用 POST /api/printers。增量,不删你手动加的。
+不传型号 → 其他;不传 pWidth → 80。用 PowerShell 发:
+
+  $b = '[{"conn":"ip","ip":"192.168.68.128","name":"飞蛾1","brand":"飞蛾","width":80},{"conn":"ip","ip":"192.168.68.252","name":"飞蛾2","brand":"飞蛾","width":80}]'
+  Invoke-RestMethod -Method Post -Uri "http://localhost:8080/api/printers" -Body ([Text.Encoding]::UTF8.GetBytes($b)) -ContentType "application/json; charset=utf-8"
