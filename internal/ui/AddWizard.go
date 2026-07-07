@@ -36,10 +36,7 @@ func (a *App) runAddWizard() *model.Printer {
 	form := struct {
 		width int
 		conn  model.Conn
-	}{width: a.cfg.Settings.DefaultPaper, conn: model.ConnNetwork}
-	if form.width != 58 && form.width != 80 {
-		form.width = 80
-	}
+	}{width: 80, conn: model.ConnNetwork}
 	step := 1
 
 	usbNames, _ := transport.ListRealPrinters() // 过滤掉 OneNote/PDF 等虚拟打印机

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"strconv"
+	"strings"
 
 	"congmingpay/internal/model"
 	"congmingpay/internal/transport"
@@ -112,23 +113,36 @@ func (m *JobModel) Value(row, col int) interface{} {
 		return j.Status.Label()
 	case 5:
 		return j.Time
+	case 6:
+		return j.Err // 详情:等待原因 / 「长期等待·疑似端口未就绪/故障」告警 / 失败原因
 	}
 	return ""
 }
 
-// StyleCell 给「状态」列按任务状态上色。
+// StyleCell 给「状态」列与「详情」列上色(长期等待告警醒目红)。
 func (m *JobModel) StyleCell(style *walk.CellStyle) {
-	if style.Col() != 4 || style.Row() < 0 || style.Row() >= len(m.items) {
+	row := style.Row()
+	if row < 0 || row >= len(m.items) {
 		return
 	}
-	switch m.items[style.Row()].Status {
-	case model.JobPrinting:
-		style.TextColor = colBlue
-	case model.JobQueued, model.JobWaiting:
-		style.TextColor = colOrange
-	case model.JobDone:
-		style.TextColor = colGreen
-	case model.JobFailed:
-		style.TextColor = colRed
+	j := m.items[row]
+	switch style.Col() {
+	case 4: // 状态
+		switch j.Status {
+		case model.JobPrinting:
+			style.TextColor = colBlue
+		case model.JobQueued, model.JobWaiting:
+			style.TextColor = colOrange
+		case model.JobDone:
+			style.TextColor = colGreen
+		case model.JobFailed:
+			style.TextColor = colRed
+		}
+	case 6: // 详情:长期等待告警 / 失败 → 红;普通等待 → 橙
+		if j.Status == model.JobFailed || (j.Status == model.JobWaiting && strings.Contains(j.Err, "疑似")) {
+			style.TextColor = colRed
+		} else if j.Status == model.JobWaiting {
+			style.TextColor = colOrange
+		}
 	}
 }

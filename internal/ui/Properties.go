@@ -14,9 +14,9 @@ import (
 // 字段用变更事件实时捕获,不在对话框关闭后读控件。
 func (a *App) runProperties(p *model.Printer) bool {
 	var dlg *walk.Dialog
-	var nameLE, ipLE, portLE, headLE, tailLE, retryMaxLE *walk.LineEdit
+	var nameLE, ipLE, portLE, headLE, tailLE *walk.LineEdit
 	var brandCB *walk.ComboBox
-	var buzzerCB, cutCB, retryCB *walk.CheckBox
+	var buzzerCB, cutCB *walk.CheckBox
 	isNet := p.Conn == model.ConnNetwork
 
 	outName, outIP, outPort := p.Name, p.IP, p.Port
@@ -24,8 +24,6 @@ func (a *App) runProperties(p *model.Printer) bool {
 	outBuzzer := p.BuzzerEnabled
 	outHead, outTail := p.HeadLines, p.TailLines
 	outCut := p.Cuts()
-	outRetry := p.Retries()
-	outRetryMax := p.MaxRetries()
 
 	fields := []Widget{
 		Label{Text: "名称:"},
@@ -42,10 +40,6 @@ func (a *App) runProperties(p *model.Printer) bool {
 		LineEdit{AssignTo: &headLE, Text: strconv.Itoa(p.HeadLines), OnTextChanged: func() { outHead = atoiOr(headLE.Text(), 0) }},
 		Label{Text: "尾部空行:"},
 		LineEdit{AssignTo: &tailLE, Text: strconv.Itoa(p.TailLines), OnTextChanged: func() { outTail = atoiOr(tailLE.Text(), 0) }},
-		Label{Text: "失败重打:"},
-		CheckBox{AssignTo: &retryCB, Text: "失败自动重打", Checked: p.Retries(), OnCheckedChanged: func() { outRetry = retryCB.Checked() }},
-		Label{Text: "重打次数:"},
-		LineEdit{AssignTo: &retryMaxLE, Text: strconv.Itoa(p.MaxRetries()), OnTextChanged: func() { outRetryMax = atoiOr(retryMaxLE.Text(), 1) }},
 	}
 	if isNet {
 		fields = append(fields,
@@ -91,8 +85,6 @@ func (a *App) runProperties(p *model.Printer) bool {
 	p.CutDisabled = !outCut
 	p.HeadLines = outHead
 	p.TailLines = outTail
-	p.NoRetry = !outRetry
-	p.RetryMax = outRetryMax
 	if isNet {
 		p.IP = outIP
 		p.Port = outPort

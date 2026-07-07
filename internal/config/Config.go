@@ -135,11 +135,9 @@ type PrinterUpdate struct {
 	Name  string      // 空=不改
 	Brand model.Brand // 空=不改
 	Width int         // 非 58/80=不改
-	// 以下 5 个参数总是覆盖(打印消息必填):
+	// 以下参数总是覆盖(打印消息必填):
 	BuzzerEnabled bool
 	CutDisabled   bool
-	NoRetry       bool
-	RetryMax      int
 	HeadLines     int
 	TailLines     int
 }
@@ -177,14 +175,6 @@ func (c *Config) UpdatePrinterFromCloud(id string, u PrinterUpdate) bool {
 		}
 		if p.CutDisabled != u.CutDisabled {
 			p.CutDisabled = u.CutDisabled
-			set(true)
-		}
-		if p.NoRetry != u.NoRetry {
-			p.NoRetry = u.NoRetry
-			set(true)
-		}
-		if p.RetryMax != u.RetryMax {
-			p.RetryMax = u.RetryMax
 			set(true)
 		}
 		if p.HeadLines != u.HeadLines {

@@ -24,14 +24,6 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path rsrc_windows_386.syso)) {
     Write-Error "rsrc failed (exit=$LASTEXITCODE)."
 }
 
-# Refresh Swagger spec from annotations (swag CLI runs on dev Go). Keep only swagger.json:
-# the generated docs.go targets a newer swag lib and would break the go1.20 build, so delete it.
-$swag = Join-Path $env:USERPROFILE 'go\bin\swag.exe'
-if (Test-Path $swag) {
-    & $swag init -g internal/api/Server.go -o internal/api/docs --parseInternal 2>$null | Out-Null
-    Remove-Item internal\api\docs\docs.go, internal\api\docs\swagger.yaml -ErrorAction SilentlyContinue
-}
-
 # 32-bit, no console window, pure Go (no CGO).
 $env:GOOS = 'windows'
 $env:GOARCH = '386'

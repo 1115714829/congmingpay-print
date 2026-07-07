@@ -72,10 +72,12 @@ func (a *App) monitorLoop(snap model.Printer, stop <-chan struct{}) {
 		if info.label != last {
 			last = info.label
 			ic := info
+			// 日志在监测 goroutine 里写(文件 I/O 不占 UI 线程,避免拖慢随后的队列刷新);
+			// UI 线程只做状态赋值 + 列表重绘。
+			logger.Infof("打印机状态: [id=%s] 名称『%s』%s → %s(%s)", snap.ID, snap.Name, snap.Address(), ic.label, ic.detail)
 			a.mw.Synchronize(func() {
 				a.printerModel.status[snap.ID] = ic
 				a.refreshPrinters()
-				logger.Infof("打印机状态: [id=%s] 名称『%s』%s → %s(%s)", snap.ID, snap.Name, snap.Address(), ic.label, ic.detail)
 			})
 			// 该机变为在线(标签非离线/检测中)→ 催它的「等待重试」任务立即打,不等退避。
 			if ic.label != "离线" && ic.label != "—" {

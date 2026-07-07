@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"sync"
 
-	"congmingpay/internal/api"
 	"congmingpay/internal/config"
+	"congmingpay/internal/docserver"
 	"congmingpay/internal/logger"
+	"congmingpay/internal/mqtt"
 	"congmingpay/internal/printsvc"
 
 	"github.com/lxn/walk"
@@ -19,7 +20,8 @@ type App struct {
 	cfg     *config.Config
 	cfgPath string
 	svc     *printsvc.Service
-	srv     *api.Server
+	mc      *mqtt.Client
+	ds      *docserver.Server
 
 	mw   *walk.MainWindow
 	tray *walk.NotifyIcon
@@ -49,22 +51,23 @@ type App struct {
 	monitorsMu sync.Mutex
 
 	// 设置视图
-	setName      *walk.LineEdit
-	setPort      *walk.LineEdit
-	setAPIPort   *walk.LineEdit
-	setPaperCB   *walk.ComboBox
-	setAutoRetry *walk.CheckBox
-	mqttBroker   *walk.LineEdit
-	mqttPort     *walk.LineEdit
-	mqttUser     *walk.LineEdit
-	mqttPass     *walk.LineEdit
-	mqttTopic    *walk.LineEdit
+	setName     *walk.LineEdit
+	mqttEnabled *walk.CheckBox
+	mqttBroker  *walk.LineEdit
+	mqttPort    *walk.LineEdit
+	mqttUser    *walk.LineEdit
+	mqttPass    *walk.LineEdit
+	mqttTopic   *walk.LineEdit
+	mqttStatus  *walk.Label
+	docEnabled  *walk.CheckBox
+	docPort     *walk.LineEdit
+	docURL      *walk.Label
 }
 
 // NewApp 创建界面控制器。
-func NewApp(cfg *config.Config, cfgPath string, svc *printsvc.Service, srv *api.Server) *App {
+func NewApp(cfg *config.Config, cfgPath string, svc *printsvc.Service, mc *mqtt.Client, ds *docserver.Server) *App {
 	return &App{
-		cfg: cfg, cfgPath: cfgPath, svc: svc, srv: srv,
+		cfg: cfg, cfgPath: cfgPath, svc: svc, mc: mc, ds: ds,
 		printerModel: newPrinterModel(), jobModel: newJobModel(),
 		monitors: map[string]*monitorHandle{},
 	}
@@ -126,12 +129,18 @@ func (a *App) Run() error {
 		})
 	})
 
-	// 云端下发打印机(同步)→ marshal 回 UI 线程刷新列表并同步监测
-	if a.srv != nil {
-		a.srv.SetOnChange(func() {
+	// 云端下发打印机(随打印自动登记)→ marshal 回 UI 线程刷新列表并同步监测
+	if a.mc != nil {
+		a.mc.SetOnChange(func() {
 			a.mw.Synchronize(func() {
 				a.refreshPrinters()
 				a.syncMonitors()
+			})
+		})
+		// 连接状态一变(连上/断开/首连失败)→ 刷新 MQTT 状态标签,不再卡"连接中…"
+		a.mc.SetOnStatus(func() {
+			a.mw.Synchronize(func() {
+				a.refreshMqttStatus()
 			})
 		})
 	}
@@ -171,6 +180,9 @@ func (a *App) showPage(i int) {
 	if i == 1 {
 		a.refreshJobs()
 	}
+	if i == 2 {
+		a.refreshMqttStatus() // 打开设置页时刷新 MQTT 连接状态
+	}
 }
 
 // warn 弹出警告提示框(并落日志)。
@@ -209,7 +221,6 @@ func (a *App) flash(msg string) {
 	}
 	logger.Info(msg)
 }
-
 
 func (a *App) save() {
 	if err := a.cfg.Save(a.cfgPath); err != nil {

@@ -107,7 +107,7 @@ func jsonTestSample(sel *model.Printer) string {
   "type": 5,
   "pWidth": ` + strconv.Itoa(width) + `,
   "pCopy": 1,
-  "buzzer": 0, "cut": 1, "retry": 1, "headLines": 0, "tailLines": 0,
+  "buzzer": 0, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
   "contents": [
     {"size":"22","bold":true,"type":"text","align":"center","cont":"一菜一切(合并)"},
     {"size":"11","bold":true,"type":"text","align":"center","cont":"(面点)"},

@@ -56,24 +56,11 @@ type Printer struct {
 	HeadLines     int    `json:"headLines"`   // 内容前空行数(走纸)
 	TailLines     int    `json:"tailLines"`   // 尾部空行相对基数的偏移(可负;实际=escpos.TailFeed)
 	CutDisabled   bool   `json:"cutDisabled"` // true=不切纸(该机无切刀);反向字段,默认 false=启用切刀
-	NoRetry       bool   `json:"noRetry"`     // true=失败不重打;反向字段,默认 false=开启重打
-	RetryMax      int    `json:"retryMax"`    // 重打次数;≤0 视为 1
 	LastPrint     string `json:"lastPrint"`
 }
 
 // Cuts 返回是否在打印末尾切纸(反向字段保证旧配置默认切纸)。
 func (p *Printer) Cuts() bool { return !p.CutDisabled }
-
-// Retries 返回失败是否重打(反向字段保证旧配置默认重打)。
-func (p *Printer) Retries() bool { return !p.NoRetry }
-
-// MaxRetries 返回重打次数(≤0 视为 1)。
-func (p *Printer) MaxRetries() int {
-	if p.RetryMax <= 0 {
-		return 1
-	}
-	return p.RetryMax
-}
 
 // BrandLabel 返回品牌展示文本,空值回退「其他」。
 func (p *Printer) BrandLabel() string {

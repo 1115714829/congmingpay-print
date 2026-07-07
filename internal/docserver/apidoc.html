@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>票据打印服务器 · API 接口文档</title>
+<style>
+  :root { --fg:#1f2328; --muted:#57606a; --border:#d0d7de; --bg:#ffffff; --code-bg:#f6f8fa; --accent:#0969da; }
+  * { box-sizing: border-box; }
+  body { margin:0; color:var(--fg); background:var(--bg);
+    font-family:"Segoe UI","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+    line-height:1.65; font-size:15px; }
+  .wrap { max-width:960px; margin:0 auto; padding:32px 24px 80px; }
+  h1 { font-size:26px; margin:0 0 4px; }
+  h2 { font-size:20px; margin:36px 0 12px; padding-bottom:6px; border-bottom:1px solid var(--border); }
+  h3 { font-size:16px; margin:24px 0 8px; }
+  p { margin:10px 0; }
+  .subtitle { color:var(--muted); margin:0 0 16px; }
+  .notice { background:#fff8c5; border:1px solid #d4a72c; border-radius:6px; padding:12px 16px; margin:16px 0; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+  th, td { border:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:var(--code-bg); font-weight:600; }
+  code { background:var(--code-bg); border-radius:4px; padding:1px 5px; font-family:Consolas,"Courier New",monospace; font-size:90%; }
+  pre { background:var(--code-bg); border:1px solid var(--border); border-radius:6px; padding:14px 16px; overflow:auto; }
+  pre code { background:none; padding:0; }
+  ul { margin:10px 0; padding-left:22px; }
+  li { margin:4px 0; }
+  .req { color:#cf222e; font-weight:600; }
+  .opt { color:var(--muted); }
+  footer { margin-top:48px; padding-top:16px; border-top:1px solid var(--border); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>票据打印服务器 · API 接口文档</h1>
+  <p class="subtitle">面向餐厅厨房的热敏小票打印服务器。云端下发指令，本地服务执行，通过 USB 或网口打印。</p>
+
+  <div class="notice">
+    本页仅供接口文档查看，为只读页面。数据通信通过 MQTT 完成，本服务不提供打印或数据接口。
+  </div>
+
+  <h2>一、通信方式</h2>
+  <p>云端与本服务之间的唯一通道为 MQTT（MQTT 3.1.1）。本服务作为客户端连接指定的 broker，订阅短商户号主题以接收打印消息，并向 <code>&lt;短商户号&gt;/report</code> 主题发布打印回执与在线状态。</p>
+  <ul>
+    <li>连接：Broker 地址与端口（默认 1883），用户名与密码，明文传输。</li>
+    <li>消息质量等级：QoS 1。</li>
+    <li>断线自动重连；异常断开时由 broker 代发遗嘱消息（LWT），内容为离线状态。</li>
+    <li>短商户号仅允许字母、数字与下划线，其余字符在输入时自动去除。</li>
+  </ul>
+
+  <h3>主题</h3>
+  <table>
+    <tr><th>方向</th><th>主题</th><th>内容</th></tr>
+    <tr><td>下行（订阅）</td><td><code>&lt;短商户号&gt;</code></td><td>打印消息，为单个 JSON 对象或对象数组</td></tr>
+    <tr><td>上行（发布）</td><td><code>&lt;短商户号&gt;/report</code></td><td>打印回执（<code>type=ack</code>）与在线状态（<code>type=status</code>）</td></tr>
+  </table>
+
+  <h2>二、打印消息（PrintRequest）</h2>
+  <p>消息 payload 为一个打印请求对象，或一个打印请求对象数组。数组中的每个元素为一个独立的打印请求，各自处理，互不影响。收到的每一条消息都会处理并打印。</p>
+
+  <h3>字段</h3>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr>
+    <tr><td><code>printer</code></td><td>字符串 或 对象</td><td class="opt">与 gateway 二选一</td><td>—</td><td>打印目标。字符串表示已注册打印机的名称或 ID；对象为 <code>{name, ip, brand, width}</code></td></tr>
+    <tr><td><code>gateway</code></td><td>字符串</td><td class="opt">与 printer 二选一</td><td>—</td><td>网口 IP（如 <code>192.168.68.194</code>），或 <code>"usb"</code> 表示首台已注册 USB 打印机</td></tr>
+    <tr><td><code>id</code></td><td>整数</td><td class="opt">可选</td><td>0</td><td>请求标识，仅用于回执与日志对应，不用于去重</td></tr>
+    <tr><td><code>type</code></td><td>整数</td><td class="opt">可选</td><td>5</td><td>内容类型。见下文「内容类型」</td></tr>
+    <tr><td><code>pWidth</code></td><td>整数</td><td class="opt">可选</td><td>按打印机设置</td><td>纸张宽度（毫米），取值 58 或 80</td></tr>
+    <tr><td><code>pCopy</code></td><td>整数</td><td class="opt">可选</td><td>1</td><td>打印份数</td></tr>
+    <tr><td><code>contents</code></td><td>数组 或 字符串</td><td class="opt">可选</td><td>—</td><td>打印内容。<code>type=5</code> 时为排版元素数组；<code>type=1</code> 时为 base64 字符串</td></tr>
+    <tr><td><code>buzzer</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>蜂鸣：0 关闭，1 开启</td></tr>
+    <tr><td><code>cut</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>切刀：0 不切纸，1 切纸</td></tr>
+    <tr><td><code>reprint</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>重打提示标题：0 普通，1 在小票顶部添加「重打」标题</td></tr>
+    <tr><td><code>headLines</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>首部空行数，0 表示默认</td></tr>
+    <tr><td><code>tailLines</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>尾部空行数，0 表示默认</td></tr>
+  </table>
+  <p><span class="req">必填</span>字段（<code>buzzer</code> / <code>cut</code> / <code>reprint</code> / <code>headLines</code> / <code>tailLines</code>）对所有内容类型均适用。缺失任一字段，或 <code>buzzer</code> / <code>cut</code> / <code>reprint</code> 取值非 0 或 1，请求将被拒绝，回执 <code>ok</code> 为 <code>false</code>，不应用默认值。</p>
+
+  <h3>内容类型（type）</h3>
+  <table>
+    <tr><th>取值</th><th>contents 形式</th><th>处理方式</th></tr>
+    <tr><td>不填 或 <code>0</code> 或 <code>5</code></td><td>排版元素数组</td><td>由服务端渲染为 ESC/POS 指令，包含编码、排版与纸宽自适应</td></tr>
+    <tr><td><code>1</code></td><td>base64 字符串</td><td>解码后作为原始 ESC/POS 指令直接下发，服务端不再排版</td></tr>
+  </table>
+  <p>两种类型的字节均由服务端统一收尾（蜂鸣、首尾空行、按 <code>cut</code> 切纸），因此 <code>type=1</code> 的 base64 内容无需包含切纸或走纸指令。</p>
+
+  <h3>打印目标解析</h3>
+  <ul>
+    <li><strong>网口 IP</strong>：<code>printer.ip</code> 或 <code>gateway</code> 为 IP。若该 IP 未注册，将在打印时自动登记为新的打印机；端口默认 9100。</li>
+    <li><strong>USB</strong>：<code>gateway</code> 为 <code>"usb"</code>，或 <code>printer</code> 指定 USB 驱动名。选择已注册的 USB 打印机，不自动登记。</li>
+    <li><strong>名称或 ID</strong>：<code>printer</code> 为字符串。仅在已注册打印机中查找，未找到则返回错误。</li>
+  </ul>
+  <p>下发报文中的五个必填参数与 <code>printer</code> 身份字段（name、brand、width）将覆盖并持久化至目标打印机配置。</p>
+
+  <h2>三、排版元素（type=5）</h2>
+  <p><code>contents</code> 为排版元素数组，服务端按元素顺序渲染为 ESC/POS，并按纸张宽度自适应（58mm 为 32 字符，80mm 为 48 字符）。支持的元素类型如下。</p>
+  <table>
+    <tr><th>元素（type）</th><th>说明</th></tr>
+    <tr><td><code>title</code></td><td>标题，居中加粗</td></tr>
+    <tr><td><code>text</code>（默认）</td><td>文本。支持 <code>bold</code>（加粗）、<code>size</code>（两位数字，宽与高放大倍率，取值 0 至 7）、<code>align</code>（left、center、right）。内容为空时输出空行</td></tr>
+    <tr><td><code>div_line</code> / <code>div_star</code></td><td>分割线（<code>-</code> 或 <code>*</code>），可附带居中标题</td></tr>
+    <tr><td>表格</td><td>由 <code>thead</code>（对象或数组，列宽百分比）与 <code>tbody</code>（二维数组）构成，按列宽自动换行</td></tr>
+    <tr><td><code>both_sides</code></td><td>左右两段文本，分别左对齐与右对齐</td></tr>
+    <tr><td><code>qrcode</code></td><td>二维码，支持单码与双码</td></tr>
+    <tr><td><code>bc128</code> / <code>code39</code></td><td>一维条码（Code128、Code39），可附带 HRI 文本</td></tr>
+    <tr><td><code>png</code></td><td>图片，来源为 URL 或 base64，转为单色位图</td></tr>
+    <tr><td><code>cut</code></td><td>切纸元素在渲染时被忽略，切纸由报文顶层 <code>cut</code> 字段统一控制</td></tr>
+  </table>
+
+  <h2>四、上行消息（发布至 &lt;短商户号&gt;/report）</h2>
+  <h3>打印回执（ack）</h3>
+  <p>每条打印请求处理后发布一条回执。</p>
+  <pre><code>{"type":"ack","id":6812801,"ok":true,"jobNo":1001,"message":"已提交"}</code></pre>
+  <table>
+    <tr><th>字段</th><th>说明</th></tr>
+    <tr><td><code>type</code></td><td>固定为 <code>"ack"</code></td></tr>
+    <tr><td><code>id</code></td><td>对应请求的 <code>id</code></td></tr>
+    <tr><td><code>ok</code></td><td>是否受理成功</td></tr>
+    <tr><td><code>jobNo</code></td><td>任务号，<code>ok</code> 为 true 时返回</td></tr>
+    <tr><td><code>message</code></td><td>结果说明或失败原因</td></tr>
+  </table>
+  <h3>在线状态（status）</h3>
+  <p>连接并订阅成功后发布上线状态；主动退出或异常断开（遗嘱）时发布离线状态。</p>
+  <pre><code>{"type":"status","event":"online","ts":1720000000000}
+{"type":"status","event":"offline"}</code></pre>
+
+  <h2>五、打印与队列行为</h2>
+  <p>打印任务进入队列后，按连接方式分为网口与 USB 两条独立路径。</p>
+  <h3>网口打印</h3>
+  <ul>
+    <li>派发前先通过 ICMP 探测判断是否在线；离线则进入等待队列。状态探测不使用打印端口 9100。</li>
+    <li>实际打印结果为最终判据。打印口被占用或未就绪（连接被拒绝）时，任务进入等待队列并按 1 至 3 秒退避重试，占用释放后自动打印。</li>
+    <li>网络超时或不可达时，任务进入等待队列并按 5 至 30 秒退避重试，恢复连接后自动打印。</li>
+    <li>已连接但写入失败时，任务标记为失败，不自动重试。</li>
+    <li>每台打印机使用一把打印串行锁，同一时刻仅建立一个连接；多份或并发任务串行打印。空闲无任务时不接触端口 9100。</li>
+    <li>连接被拒绝持续约 20 秒后，在打印队列的详情列与日志中显示警告（端口可能未就绪或打印机故障），任务保持等待，不自动失败。</li>
+  </ul>
+  <h3>USB 打印</h3>
+  <ul>
+    <li>USB 打印通过 Windows 打印后台（打印驱动）完成，不进行 ICMP 在线探测，不接触端口 9100，不参与被占用或离线的重试逻辑。</li>
+    <li>成功交付打印后台即视为完成（打印机离线时，Windows 会在其恢复后补打）；交付失败（驱动、名称或配置错误）即标记为失败。</li>
+  </ul>
+  <h3>重打</h3>
+  <p>「重打」提示标题由两种方式触发：在打印队列中点击「重新打印」，或下发报文 <code>reprint</code> 为 1。两种方式均会在小票顶部添加「重打」标题，并遵循上述队列规则。<code>reprint</code> 为 0 的普通打印不显示该标题。</p>
+
+  <h2>六、示例</h2>
+  <h3>单台（网口 IP，未注册时自动登记）</h3>
+  <pre><code>{
+  "printer": {"name":"飞蛾1","ip":"192.168.68.194","brand":"飞蛾","width":80},
+  "id": 6812801,
+  "type": 5,
+  "pWidth": 80,
+  "pCopy": 1,
+  "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
+  "contents": [
+    {"cont":"结账单","type":"title"},
+    {"cont":"【堂食】桌号：A08","type":"text","align":"center"},
+    {"type":"div_line"},
+    {"thead":{"商品名称":"85%","数量":"15%"},"tbody":[["猪肉大葱小笼包","1笼"]]},
+    {"type":"div_line"},
+    {"cont":"总计：1件","type":"text","bold":true,"align":"right"}
+  ]
+}</code></pre>
+  <h3>多台（数组，一次下发多条）</h3>
+  <p>最外层为数组 <code>[ {…}, {…} ]</code>，每个元素结构同上，各自指定 <code>printer</code> 或 <code>gateway</code> 与内容。数组中多个元素指向同一台打印机时，该打印机按顺序依次打印。</p>
+
+  <footer>
+    本页由票据打印服务器内置的只读文档服务提供，仅供接口查看。数据通信通过 MQTT 完成。
+  </footer>
+
+</div>
+</body>
+</html>

@@ -14,9 +14,11 @@ import (
 	"path/filepath"
 	"runtime/debug"
 
-	"congmingpay/internal/api"
 	"congmingpay/internal/config"
+	"congmingpay/internal/docserver"
 	"congmingpay/internal/logger"
+	"congmingpay/internal/model"
+	"congmingpay/internal/mqtt"
 	"congmingpay/internal/printsvc"
 	"congmingpay/internal/ui"
 )
@@ -49,32 +51,34 @@ func main() {
 			logger.Errorf("保存修复后的配置失败: %v", err)
 		}
 	}
+	// 迁移:旧配置无 docServer 段(Port==0)→ 应用默认(启用、端口 8080),并落盘
+	if cfg.Settings.DocServer.Port == 0 {
+		cfg.Settings.DocServer = model.DefaultSettings().DocServer
+		if err := cfg.Save(cfgPath); err != nil {
+			logger.Errorf("保存默认接口文档服务配置失败: %v", err)
+		}
+	}
 	// 打印机清单(含 ID)日志,便于排查
 	for _, p := range cfg.PrinterList() {
 		logger.Infof("已加载打印机: [id=%s] 名称『%s』品牌『%s』规格 %s 目标 %s", p.ID, p.Name, p.BrandLabel(), p.WidthLabel(), p.Target())
 	}
 
 	svc := printsvc.New()
-	// API 与 UI 共享同一个 Server:UI 在 Run 里给它注册打印机列表刷新回调。
-	srv := api.NewServer(cfg, svc, cfgPath)
-	go startAPI(srv, cfg.Settings.APIPort)
+	// 云端唯一通道:MQTT。UI 在 Run 里给它注册打印机列表刷新回调,并在设置保存时 Reload。
+	mc := mqtt.New(cfg, svc, cfgPath)
+	mc.Start()
+	defer mc.Close()
 
-	if err := ui.NewApp(cfg, cfgPath, svc, srv).Run(); err != nil {
+	// 仅局域网、只读的在线接口文档服务(不参与数据通信)。UI 在设置保存时 Reload。
+	ds := docserver.New()
+	ds.Start(cfg.Settings.DocServer)
+	defer ds.Stop()
+
+	if err := ui.NewApp(cfg, cfgPath, svc, mc, ds).Run(); err != nil {
 		logger.Errorf("启动界面失败: %v", err)
 		os.Exit(1)
 	}
 	logger.Info("=== 正常退出 ===")
-}
-
-// startAPI 启动本地 HTTP 打印 API(阻塞;用 goroutine 调用)。
-func startAPI(srv *api.Server, port string) {
-	if port == "" {
-		port = "8080"
-	}
-	logger.Infof("HTTP API 监听 :%s (/api/print, /api/printers, /swagger/)", port)
-	if err := srv.Start(":" + port); err != nil {
-		logger.Errorf("HTTP API 启动失败: %v", err)
-	}
 }
 
 // logFilePath 返回与可执行文件同目录下的日志路径。
