@@ -8,7 +8,15 @@ Set-Location -Path $PSScriptRoot
 
 $go = Join-Path $env:USERPROFILE 'go\bin\go1.20.14.exe'
 if (-not (Test-Path $go)) {
-    Write-Error "go1.20.14 not found. Run: go install golang.org/dl/go1.20.14@latest ; go1.20.14 download"
+    # Fall back to the default 'go' only when it IS exactly go1.20.14
+    # (machines where 1.20.14 is the default install). Keeps the Win7 pin intact.
+    $ver = ''
+    try { $ver = (& go version) } catch {}
+    if ("$ver" -match 'go1\.20\.14') {
+        $go = 'go'
+    } else {
+        Write-Error "go1.20.14 not found. Run: go install golang.org/dl/go1.20.14@latest ; go1.20.14 download"
+    }
 }
 
 # Generate Windows resources: embed manifest (comctl32 v6 theme + asInvoker + Win7 compat).

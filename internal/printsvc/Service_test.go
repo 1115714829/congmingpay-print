@@ -130,6 +130,78 @@ func TestRetryWhileWaitingNoDuplicatePrint(t *testing.T) {
 	}
 }
 
+// 终态事件:打印成功应触发 OnJobFinal(OK=true、CloudID 回携);本地任务(无 CloudID)事件照发、CloudID 为 nil。
+func TestJobFinalEventOnDone(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("无法起本地监听: %v", err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, e := l.Accept()
+			if e != nil {
+				return
+			}
+			_, _ = io.Copy(io.Discard, c)
+			_ = c.Close()
+		}
+	}()
+	port := l.Addr().(*net.TCPAddr).Port
+
+	svc := New()
+	events := make(chan JobFinalEvent, 4)
+	svc.SetOnJobFinal(func(ev JobFinalEvent) { events <- ev })
+
+	p := &model.Printer{ID: "e1", Name: "e1", Conn: model.ConnNetwork, IP: "127.0.0.1", Port: fmt.Sprintf("%d", port), Width: 80}
+	id := uint32(880001)
+	noCloud := svc.Submit(p, "cloud", []byte("x"), &Options{CloudID: &id})
+	noLocal := svc.Submit(p, "local", []byte("y"), nil)
+
+	got := map[int]JobFinalEvent{}
+	deadline := time.After(8 * time.Second)
+	for len(got) < 2 {
+		select {
+		case ev := <-events:
+			got[ev.JobNo] = ev
+		case <-deadline:
+			t.Fatalf("8s 内未收齐 2 个终态事件,已收 %d", len(got))
+		}
+	}
+	ev := got[noCloud]
+	if !ev.OK {
+		t.Errorf("云端任务应 OK=true,got %+v", ev)
+	}
+	if ev.CloudID == nil || *ev.CloudID != id {
+		t.Errorf("终态事件应回携 CloudID=%d,got %+v", id, ev.CloudID)
+	}
+	evL := got[noLocal]
+	if !evL.OK {
+		t.Errorf("本地任务应 OK=true,got %+v", evL)
+	}
+	if evL.CloudID != nil {
+		t.Errorf("本地任务 CloudID 应为 nil,got %d", *evL.CloudID)
+	}
+}
+
+// 等待重试(拒连)不触发终态事件——只有成功/失败终态才上报。
+func TestNoFinalEventWhileWaiting(t *testing.T) {
+	svc := New()
+	events := make(chan JobFinalEvent, 1)
+	svc.SetOnJobFinal(func(ev JobFinalEvent) { events <- ev })
+	p := &model.Printer{ID: "e2", Name: "e2", Conn: model.ConnNetwork, IP: "127.0.0.1", Port: "1", Width: 80}
+	no := svc.Submit(p, "test", []byte("x"), nil)
+	if !waitFor(t, func() bool { return jobStatus(svc, no) == model.JobWaiting }, 3*time.Second) {
+		t.Fatalf("应进入 JobWaiting,当前=%s", jobStatus(svc, no))
+	}
+	select {
+	case ev := <-events:
+		t.Fatalf("等待重试不应触发终态事件: %+v", ev)
+	case <-time.After(2 * time.Second):
+	}
+	svc.Cancel(no)
+}
+
 // Cancel 应让等待中的任务停止(从列表移除)。
 func TestCancelStopsWaiting(t *testing.T) {
 	svc := New()

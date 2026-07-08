@@ -31,6 +31,7 @@ type Options struct {
 	Reprint   *bool // 本单是否带"重打"醒目抬头(消息 reprint:1 或手动重打)
 	HeadLines *int
 	TailLines *int
+	CloudID   *uint32 // 云端消息 id(随任务走,终态事件回携);nil=本地任务
 }
 
 // entry 是一个任务的内部记录,附带打印机快照、数据与生效参数。
@@ -38,6 +39,7 @@ type entry struct {
 	job     *model.Job
 	printer model.Printer
 	data    []byte
+	cloudID *uint32 // 云端消息 id(终态事件回携);nil=本地任务
 
 	// 生效参数(提交时按覆盖/默认解析)
 	cut       bool
@@ -58,10 +60,11 @@ type entry struct {
 
 // Service 是并发打印调度器。
 type Service struct {
-	mu      sync.Mutex
-	entries []*entry
-	nextNo  int
-	notify  func()
+	mu         sync.Mutex
+	entries    []*entry
+	nextNo     int
+	notify     func()
+	onJobFinal func(JobFinalEvent) // 任务终态(成功/失败)回调,见 Events.go
 
 	// 每台打印机一把打印串行锁(printerID → *sync.Mutex):本进程对同一台同时只开一个 9100 连接,
 	// pCopy 多份/并发任务串行打印,彼此不自撞 RST;不同打印机仍并行。仅在真打(transport.Print)那步持锁。
@@ -135,13 +138,14 @@ func (s *Service) Submit(p *model.Printer, doc string, data []byte, opts *Option
 		if opts.TailLines != nil {
 			e.tailLines = *opts.TailLines
 		}
+		e.cloudID = opts.CloudID
 	}
 
 	s.mu.Lock()
 	s.nextNo++
 	e.job = &model.Job{
-		No: s.nextNo, Doc: doc, PrinterID: p.ID, Printer: p.Name,
-		Copies: 1, Status: model.JobQueued, Time: time.Now().Format("15:04:05"),
+		No: s.nextNo, Doc: doc, Printer: p.Name,
+		Status: model.JobQueued, Time: time.Now().Format("15:04:05"),
 	}
 	jobNo := e.job.No
 	s.entries = append([]*entry{e}, s.entries...)
@@ -431,8 +435,20 @@ func (s *Service) setStatus(e *entry, st model.JobStatus, errMsg string) {
 	s.mu.Lock()
 	e.job.Status = st
 	e.job.Err = errMsg
+	// 终态(成功/失败)→ 锁内做事件快照,锁外触发上报回调。四个终态出口全经此收口,各恰好一次。
+	var ev *JobFinalEvent
+	if st == model.JobDone || st == model.JobFailed {
+		ev = &JobFinalEvent{
+			JobNo: e.job.No, CloudID: e.cloudID,
+			Printer: e.printer.Name, Target: e.printer.Target(),
+			OK: st == model.JobDone, Err: errMsg,
+		}
+	}
 	s.mu.Unlock()
 	s.fireNotify()
+	if ev != nil {
+		s.fireJobFinal(*ev)
+	}
 }
 
 func (s *Service) find(no int) *entry {

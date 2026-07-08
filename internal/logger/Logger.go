@@ -50,6 +50,12 @@ func Info(msg string) { output("INFO", msg) }
 // Infof 按格式记录一条信息级日志。
 func Infof(format string, args ...interface{}) { output("INFO", fmt.Sprintf(format, args...)) }
 
+// Warn 记录一条警告级日志。
+func Warn(msg string) { output("WARN", msg) }
+
+// Warnf 按格式记录一条警告级日志。
+func Warnf(format string, args ...interface{}) { output("WARN", fmt.Sprintf(format, args...)) }
+
 // Error 记录一条错误级日志。
 func Error(msg string) { output("ERROR", msg) }
 

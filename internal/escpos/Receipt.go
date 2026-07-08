@@ -13,9 +13,9 @@ func BuildTestReceipt(now time.Time, widthMM int) ([]byte, error) {
 	divider := strings.Repeat("-", cpl)
 	return NewBuilder().
 		SetAlign(AlignCenter).
-		SetDoubleSize(true).SetEmphasize(true).
+		SetSize(1, 1).SetEmphasize(true).
 		Line("聪明付 打印测试").
-		SetDoubleSize(false).SetEmphasize(false).
+		SetSize(0, 0).SetEmphasize(false).
 		Line("congmingpay Print Test").
 		SetAlign(AlignLeft).
 		Line(divider).

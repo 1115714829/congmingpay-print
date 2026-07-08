@@ -1,7 +1,8 @@
 package layout
 
 // SampleContents 是覆盖各元素的示例小票排版(基于云端 JSON 排版结构),供「打印样票」验证。
-// 结构与 MQTT type=5 的 contents 一致;png 用示例 URL,不可达则自动跳过。
+// 结构与 MQTT type=5 的 contents 一致;png 用内嵌 data URI(120x40 边框+对角线测试图)——
+// 严格模式下外网 URL 不可达会整单拒印,故样票不依赖网络。
 var SampleContents = []byte(`[
   {"cont":"聪明付 排版样票","type":"title"},
   {"cont":"普通文本行","type":"text"},
@@ -25,6 +26,6 @@ var SampleContents = []byte(`[
   {"cont":"123456789","type":"bc128","align":"center","size":"22"},
   {"cont":"123456789","type":"code39","align":"center","hri":2},
   {"type":"div_star","cont":"图片"},
-  {"type":"png","cont":"http://linxiaoge.oss-cn-shanghai.aliyuncs.com/ic/add/test.png","align":"center"},
+  {"type":"png","cont":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAAAoCAAAAAAQgWH5AAAA9ElEQVR4nMTX0c7DIAgFYPqH93/l/hfNmsYinINSuFm21fMtTg3+SVO1wSpyishxvdTX8fP0en9+Yj8JvT+ttodwfX5XZ79jdXiiwjYDR3i7PYsy4I22E2LDW2x/+BRetMOBHpy2kSEBnLDBh2OYsvGfCMGgTU0MCoc2uxQI2LETC5CDTTu35Wh4sNMbPQPftiwcbZ2tT6Z6pvqJpc9zGn4zOZuDZ0DCJmA/mrVRGAmlbAjG43A7htk/D7QDOLdVENuDV5q90J7C6+2tb9vwrobesQ147xVmZo9wxaXNtLVandn6gWra+o1q2j3V1vr8BwAA//+lrWd0PceUpQAAAABJRU5ErkJggg==","align":"center"},
   {"cont":"","type":"text"}
 ]`)

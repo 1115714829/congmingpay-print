@@ -227,6 +227,33 @@ func (c *Config) PrinterList() []*model.Printer {
 	return out
 }
 
+// PrinterSnapshots 返回打印机列表的**值拷贝**快照(读锁内完成深拷贝)。
+// model.Printer 全为值类型字段,`*p` 即深拷贝——供跨 goroutine 安全读取(如 MQTT 上报),
+// 不共享指针、不与 UI 写(经 UpdatePrinterFields)撕裂。
+func (c *Config) PrinterSnapshots() []model.Printer {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]model.Printer, len(c.Printers))
+	for i, p := range c.Printers {
+		out[i] = *p
+	}
+	return out
+}
+
+// UpdatePrinterFields 在写锁内对指定打印机执行 apply(供 UI 属性编辑安全写字段,
+// 与 PrinterSnapshots 的读锁、UpdatePrinterFromCloud 的写锁互斥)。返回是否命中。
+func (c *Config) UpdatePrinterFields(id string, apply func(*model.Printer)) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, p := range c.Printers {
+		if p.ID == id {
+			apply(p)
+			return true
+		}
+	}
+	return false
+}
+
 // RemovePrinter 按 ID 移除打印机,返回是否移除成功(加写锁)。
 func (c *Config) RemovePrinter(id string) bool {
 	c.mu.Lock()

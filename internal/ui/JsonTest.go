@@ -13,7 +13,7 @@ import (
 	. "github.com/lxn/walk/declarative"
 )
 
-// onJSONTest 打开对话框填写打印 JSON(与 POST /api/print 同格式),暂代 MQTT:填内容即打印。
+// onJSONTest 打开对话框填写打印 JSON(与 MQTT 打印消息同格式),本地直接走 api.Process,等价云端下发。
 func (a *App) onJSONTest() {
 	sel := a.selectedPrinter()
 	sample := strings.ReplaceAll(jsonTestSample(sel), "\n", "\r\n")
@@ -26,7 +26,7 @@ func (a *App) onJSONTest() {
 		MinSize:  Size{Width: 580, Height: 500},
 		Layout:   VBox{},
 		Children: []Widget{
-			Label{Text: "编辑打印 JSON(与 POST /api/print 同格式,暂代 MQTT 下发)。单个对象=打一台,数组 [ {…},{…} ]=打多台。"},
+			Label{Text: "编辑打印 JSON(与 MQTT 打印消息同格式,等价云端下发)。单个对象=打一台,数组 [ {…},{…} ]=打多台。"},
 			Label{Text: "目标 printer 可为对象 {name,ip,brand,width}(未注册自动新增)或名字字符串;或用 gateway(IP);留空=选中机。"},
 			TextEdit{AssignTo: &te, Text: sample, VScroll: true, Font: Font{Family: "Consolas", PointSize: 9}},
 			Composite{
@@ -64,6 +64,7 @@ func (a *App) onJSONTest() {
 							a.save()
 							a.refreshPrinters()
 							a.syncMonitors()
+							a.publishPrinterList() // 列表/参数有变 → 上报全量列表
 						}
 						if ok == 0 {
 							a.warn("JSON 打印测试", lastErr)

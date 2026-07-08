@@ -15,7 +15,7 @@ func (a *App) setupTray(icon *walk.Icon) error {
 			return err
 		}
 	}
-	if err := ni.SetToolTip("聪明付 打印服务器"); err != nil {
+	if err := ni.SetToolTip(a.serviceName()); err != nil {
 		return err
 	}
 

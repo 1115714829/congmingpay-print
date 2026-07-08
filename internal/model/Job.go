@@ -34,14 +34,12 @@ func (s JobStatus) Active() bool {
 	return s == JobQueued || s == JobPrinting || s == JobWaiting
 }
 
-// Job 是一次打印任务(用于展示)。
+// Job 是一次打印任务(用于展示)。多份打印(pCopy)= 多个任务,每个 Job 恒为一份。
 type Job struct {
-	No        int
-	Doc       string
-	PrinterID string
-	Printer   string
-	Copies    int
-	Status    JobStatus
-	Time      string
-	Err       string
+	No      int
+	Doc     string
+	Printer string // 打印机名称(展示;调度内部用 entry.printer)
+	Status  JobStatus
+	Time    string
+	Err     string
 }

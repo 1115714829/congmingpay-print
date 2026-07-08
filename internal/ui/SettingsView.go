@@ -45,6 +45,8 @@ func (a *App) settingsPageWidget() Composite {
 					LineEdit{AssignTo: &a.mqttPass, Text: s.MQTT.Password, PasswordMode: true},
 					Label{Text: "聪明付短商户号:"},
 					LineEdit{AssignTo: &a.mqttTopic, Text: s.MQTT.Topic, CueBanner: "订阅主题;仅字母数字下划线", OnTextChanged: a.onMerchantChanged},
+					Label{Text: "上报主题:"},
+					LineEdit{AssignTo: &a.mqttReport, Text: s.MQTT.ReportTopic, CueBanner: "上行发布主题,必填,如 server(所有客户端发往服务端同一主题)"},
 					Label{Text: "连接状态:"},
 					Label{AssignTo: &a.mqttStatus, Text: "—", TextColor: colGray},
 				},
@@ -86,12 +88,13 @@ func (a *App) onMerchantChanged() {
 // currentMQTT 从设置页当前输入(未保存)组装 MQTT 参数。
 func (a *App) currentMQTT() model.MQTT {
 	return model.MQTT{
-		Enabled:  a.mqttEnabled.Checked(),
-		Broker:   strings.TrimSpace(a.mqttBroker.Text()),
-		Port:     atoiOr(a.mqttPort.Text(), 1883),
-		Username: a.mqttUser.Text(),
-		Password: a.mqttPass.Text(),
-		Topic:    mqtt.SanitizeMerchant(a.mqttTopic.Text()),
+		Enabled:     a.mqttEnabled.Checked(),
+		Broker:      strings.TrimSpace(a.mqttBroker.Text()),
+		Port:        atoiOr(a.mqttPort.Text(), 1883),
+		Username:    a.mqttUser.Text(),
+		Password:    a.mqttPass.Text(),
+		Topic:       mqtt.SanitizeMerchant(a.mqttTopic.Text()),
+		ReportTopic: strings.TrimSpace(a.mqttReport.Text()),
 	}
 }
 
@@ -119,6 +122,43 @@ func (a *App) setMqttStatus(text string, color walk.Color) {
 }
 
 func (a *App) onSaveSettings() {
+	// 校验:启用 MQTT 时**全部选项必填**(Broker/端口/用户名/密码/短商户号/上报主题),
+	// 且上报主题不得含发布非法的通配符 +/#、不得等于订阅主题;任一不合规拦截整个保存(不落盘、不 Reload)。
+	report := strings.TrimSpace(a.mqttReport.Text())
+	if a.mqttEnabled.Checked() {
+		var miss []string
+		if strings.TrimSpace(a.mqttBroker.Text()) == "" {
+			miss = append(miss, "Broker")
+		}
+		if p, err := strconv.Atoi(strings.TrimSpace(a.mqttPort.Text())); err != nil || p <= 0 || p > 65535 {
+			miss = append(miss, "端口(1-65535)")
+		}
+		if strings.TrimSpace(a.mqttUser.Text()) == "" {
+			miss = append(miss, "用户名")
+		}
+		if a.mqttPass.Text() == "" {
+			miss = append(miss, "密码")
+		}
+		if mqtt.SanitizeMerchant(a.mqttTopic.Text()) == "" {
+			miss = append(miss, "聪明付短商户号")
+		}
+		if report == "" {
+			miss = append(miss, "上报主题")
+		}
+		if len(miss) > 0 {
+			a.warn("无法保存", "启用 MQTT 时以下选项均为必填,请补全后再保存:\r\n"+strings.Join(miss, "、"))
+			return
+		}
+		if strings.ContainsAny(report, "+#") {
+			a.warn("无法保存", "上报主题不能包含通配符 + 或 #(发布主题必须是确定主题)。")
+			return
+		}
+		if report == mqtt.SanitizeMerchant(a.mqttTopic.Text()) {
+			a.warn("无法保存", "上报主题不能与聪明付短商户号(订阅主题)相同——上报会被自己收到,形成消息回环。")
+			return
+		}
+	}
+
 	s := &a.cfg.Settings
 	s.ServiceName = strings.TrimSpace(a.setName.Text())
 	s.MQTT.Enabled = a.mqttEnabled.Checked()
@@ -127,12 +167,20 @@ func (a *App) onSaveSettings() {
 	s.MQTT.Username = a.mqttUser.Text()
 	s.MQTT.Password = a.mqttPass.Text()
 	s.MQTT.Topic = mqtt.SanitizeMerchant(a.mqttTopic.Text())
+	s.MQTT.ReportTopic = report
 
 	s.DocServer.Enabled = a.docEnabled.Checked()
 	s.DocServer.Port = docPortOr(atoiOr(a.docPort.Text(), docserver.DefaultPort))
 
 	a.save()
 	a.flash("设置已保存")
+	// 服务名称即时生效:窗口标题 + 托盘提示
+	if a.mw != nil {
+		_ = a.mw.SetTitle(a.windowTitle())
+	}
+	if a.tray != nil {
+		_ = a.tray.SetToolTip(a.serviceName())
+	}
 	if a.mc != nil {
 		a.mc.Reload(s.MQTT) // 按新配置重连
 		a.refreshMqttStatus()

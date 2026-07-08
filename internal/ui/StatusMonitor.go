@@ -17,9 +17,11 @@ type monitorHandle struct {
 	sig  string // 连接身份签名;变了(如改 IP)则停旧起新
 }
 
-// monSig 返回打印机的连接身份签名(监测相关字段)。
+// monSig 返回打印机的监测签名(连接身份 + 名称)。
+// 含 Name:改名后签名变化 → syncMonitors 停旧起新,让监测 goroutine 的 snap 拿到新名称,
+// 否则后续在线/离线上报(PublishPrinterStatus 用 snap.Name)会携带旧名,与 printerList 的新名不一致。
 func monSig(p *model.Printer) string {
-	return string(p.Conn) + "|" + p.IP + "|" + p.Port + "|" + p.USBName
+	return string(p.Conn) + "|" + p.IP + "|" + p.Port + "|" + p.USBName + "|" + p.Name
 }
 
 // syncMonitors 让后台监测与当前打印机列表对齐:缺的起、变的重启、删的停。
@@ -64,11 +66,15 @@ func (a *App) stopAllMonitors() {
 
 // monitorLoop 每台一条:后台不间断检测(网口 ICMP ping、USB winspool),约 1 次/秒。
 // 不做防抖——超时即离线、通即在线;仅状态标签变化时回 UI 线程刷新并记日志。
+// 另按**在线布尔边沿**(含首查基线)上报 MQTT 打印机状态——「就绪↔缺纸」标签变但在线态不变,不上报;
+// 上报在监测 goroutine 内直发(paho 线程安全),不进 UI 线程、不影响 NudgeOnline 与刷新路径。
 func (a *App) monitorLoop(snap model.Printer, stop <-chan struct{}) {
-	last := "" // 上次显示的状态标签
+	last := ""              // 上次显示的状态标签
+	var lastOnline *bool    // 上次上报的在线布尔;nil=尚未首查
 	for {
 		t0 := time.Now()
-		info := statusInfoFor(printsvc.Status(&snap))
+		st := printsvc.Status(&snap)
+		info := statusInfoFor(st)
 		if info.label != last {
 			last = info.label
 			ic := info
@@ -83,6 +89,10 @@ func (a *App) monitorLoop(snap model.Printer, stop <-chan struct{}) {
 			if ic.label != "离线" && ic.label != "—" {
 				a.svc.NudgeOnline(snap.ID)
 			}
+		}
+		if online := st.Reachable && st.Online; a.mc != nil && (lastOnline == nil || *lastOnline != online) {
+			lastOnline = &online
+			a.mc.PublishPrinterStatus(&snap, online, info.label+"("+info.detail+")")
 		}
 		wait := pingInterval - time.Since(t0)
 		if wait < 0 {

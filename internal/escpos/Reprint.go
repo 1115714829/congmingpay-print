@@ -9,9 +9,9 @@ func ReprintBanner(widthMM int) []byte {
 	data, _ := NewBuilder().
 		SetAlign(AlignCenter).
 		Line(line).
-		SetEmphasize(true).SetDoubleSize(true).
+		SetEmphasize(true).SetSize(1, 1).
 		Line("重打小票").
-		SetDoubleSize(false).
+		SetSize(0, 0).
 		Line("打印服务器 重印").
 		SetEmphasize(false).
 		Line(line).

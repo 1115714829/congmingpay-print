@@ -5,10 +5,6 @@
 # 生成的 Windows 资源(build.ps1 用 rsrc 重新生成)
 *.syso
 
-# swaggo 生成物(swagger.json 内嵌需保留;docs.go/yaml 由 build.ps1 删除)
-internal/api/docs/docs.go
-internal/api/docs/swagger.yaml
-
 # 运行时产物(与 exe 同目录,机器相关)
 /config.json
 *.log

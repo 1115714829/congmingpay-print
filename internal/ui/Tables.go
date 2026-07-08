@@ -108,12 +108,10 @@ func (m *JobModel) Value(row, col int) interface{} {
 	case 2:
 		return j.Printer
 	case 3:
-		return strconv.Itoa(j.Copies)
-	case 4:
 		return j.Status.Label()
-	case 5:
+	case 4:
 		return j.Time
-	case 6:
+	case 5:
 		return j.Err // 详情:等待原因 / 「长期等待·疑似端口未就绪/故障」告警 / 失败原因
 	}
 	return ""
@@ -127,7 +125,7 @@ func (m *JobModel) StyleCell(style *walk.CellStyle) {
 	}
 	j := m.items[row]
 	switch style.Col() {
-	case 4: // 状态
+	case 3: // 状态
 		switch j.Status {
 		case model.JobPrinting:
 			style.TextColor = colBlue
@@ -138,7 +136,7 @@ func (m *JobModel) StyleCell(style *walk.CellStyle) {
 		case model.JobFailed:
 			style.TextColor = colRed
 		}
-	case 6: // 详情:长期等待告警 / 失败 → 红;普通等待 → 橙
+	case 5: // 详情:长期等待告警 / 失败 → 红;普通等待 → 橙
 		if j.Status == model.JobFailed || (j.Status == model.JobWaiting && strings.Contains(j.Err, "疑似")) {
 			style.TextColor = colRed
 		} else if j.Status == model.JobWaiting {

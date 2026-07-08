@@ -43,15 +43,6 @@ func (b *Builder) SetEmphasize(on bool) *Builder {
 	return b.raw(0x1B, 0x45, boolByte(on))
 }
 
-// SetDoubleSize 设置倍宽倍高(GS ! n)。on 时高低 4 位各为 1,即双宽双高。
-func (b *Builder) SetDoubleSize(on bool) *Builder {
-	n := byte(0x00)
-	if on {
-		n = 0x11
-	}
-	return b.raw(0x1D, 0x21, n)
-}
-
 // SetSize 设置字符放大倍数(GS ! n)。wMag/hMag 为 0-7(0=1倍…7=8倍)。
 func (b *Builder) SetSize(wMag, hMag int) *Builder {
 	return b.raw(0x1D, 0x21, byte(clampByte(wMag, 0, 7)<<4|clampByte(hMag, 0, 7)))
@@ -82,11 +73,6 @@ func (b *Builder) Feed(n int) *Builder {
 		b.raw(0x0A)
 	}
 	return b
-}
-
-// Cut 半切纸(GS V 1)。
-func (b *Builder) Cut() *Builder {
-	return b.raw(0x1D, 0x56, 0x01)
 }
 
 // Bytes 返回累积的字节;过程中若出错则返回该错误。

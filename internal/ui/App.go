@@ -3,11 +3,13 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"congmingpay/internal/config"
 	"congmingpay/internal/docserver"
 	"congmingpay/internal/logger"
+	"congmingpay/internal/model"
 	"congmingpay/internal/mqtt"
 	"congmingpay/internal/printsvc"
 
@@ -58,6 +60,7 @@ type App struct {
 	mqttUser    *walk.LineEdit
 	mqttPass    *walk.LineEdit
 	mqttTopic   *walk.LineEdit
+	mqttReport  *walk.LineEdit // 上报(发布)主题,启用 MQTT 时必填
 	mqttStatus  *walk.Label
 	docEnabled  *walk.CheckBox
 	docPort     *walk.LineEdit
@@ -73,13 +76,24 @@ func NewApp(cfg *config.Config, cfgPath string, svc *printsvc.Service, mc *mqtt.
 	}
 }
 
+// serviceName 返回设置的「服务名称」(空则回退默认值),用于窗口标题与托盘提示。
+func (a *App) serviceName() string {
+	if name := strings.TrimSpace(a.cfg.Settings.ServiceName); name != "" {
+		return name
+	}
+	return model.DefaultSettings().ServiceName
+}
+
+// windowTitle 返回主窗口标题(服务名称 + 固定后缀)。
+func (a *App) windowTitle() string { return a.serviceName() + " — 管理控制台" }
+
 // Run 构建并运行主窗口,阻塞直到退出。
 func (a *App) Run() error {
 	icon := loadAppIcon()
 
 	if err := (MainWindow{
 		AssignTo: &a.mw,
-		Title:    "票据打印服务器 — 管理控制台",
+		Title:    a.windowTitle(),
 		MinSize:  Size{Width: 900, Height: 560},
 		Size:     Size{Width: 1000, Height: 640},
 		Layout:   VBox{MarginsZero: true, SpacingZero: true},
@@ -225,5 +239,12 @@ func (a *App) flash(msg string) {
 func (a *App) save() {
 	if err := a.cfg.Save(a.cfgPath); err != nil {
 		logger.Errorf("保存配置失败: %v", err)
+	}
+}
+
+// publishPrinterList 打印机列表/参数变更后上报全量列表(mc 未建或 MQTT 未启用时自动跳过)。
+func (a *App) publishPrinterList() {
+	if a.mc != nil {
+		a.mc.PublishPrinterList()
 	}
 }

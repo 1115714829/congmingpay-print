@@ -9,11 +9,6 @@ import (
 	"github.com/alexbrainman/printer"
 )
 
-// ListPrinters 返回本机已安装的打印机名称(USB 打印机需先由 Windows 驱动接管才会出现)。
-func ListPrinters() ([]string, error) {
-	return printer.ReadNames()
-}
-
 // IsVirtualPrinter 判断是否为 Windows 虚拟打印机(OneNote/PDF/XPS/Fax),它们不接受 RAW ESC/POS。
 func IsVirtualPrinter(name string) bool {
 	n := strings.ToLower(name)

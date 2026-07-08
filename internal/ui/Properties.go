@@ -79,15 +79,18 @@ func (a *App) runProperties(p *model.Printer) bool {
 	if result != walk.DlgCmdOK {
 		return false
 	}
-	p.Name = outName
-	p.Brand = model.BrandForIndex(outBrandIdx)
-	p.BuzzerEnabled = outBuzzer
-	p.CutDisabled = !outCut
-	p.HeadLines = outHead
-	p.TailLines = outTail
-	if isNet {
-		p.IP = outIP
-		p.Port = outPort
-	}
+	// 经 Config 写锁更新字段:与 MQTT 上报(PrinterSnapshots 读锁)、云端参数覆盖互斥,避免并发读写撕裂。
+	a.cfg.UpdatePrinterFields(p.ID, func(pp *model.Printer) {
+		pp.Name = outName
+		pp.Brand = model.BrandForIndex(outBrandIdx)
+		pp.BuzzerEnabled = outBuzzer
+		pp.CutDisabled = !outCut
+		pp.HeadLines = outHead
+		pp.TailLines = outTail
+		if isNet {
+			pp.IP = outIP
+			pp.Port = outPort
+		}
+	})
 	return true
 }

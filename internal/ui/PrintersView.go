@@ -146,6 +146,7 @@ func (a *App) onAddPrinter() {
 	a.save()
 	a.refreshPrinters()
 	a.syncMonitors()
+	a.publishPrinterList() // 列表有变 → 上报全量列表
 	logger.Infof("已添加打印机 名称『%s』品牌『%s』规格 %s 连接 %s %s", p.Name, p.BrandLabel(), p.WidthLabel(), p.ConnLabel(), p.Target())
 	a.flash("已添加打印机「" + p.Name + "」")
 }
@@ -209,7 +210,8 @@ func (a *App) onProperties() {
 	if a.runProperties(p) {
 		a.save()
 		a.refreshPrinters()
-		a.syncMonitors() // 改了 IP 等 → 按 sig 变化重启该机监测
+		a.syncMonitors()       // 改了 IP 等 → 按 sig 变化重启该机监测
+		a.publishPrinterList() // 参数/身份有变 → 上报全量列表
 		a.flash("已保存「" + p.Name + "」的属性")
 	}
 }
@@ -226,6 +228,7 @@ func (a *App) onDeletePrinter() {
 	a.cfg.RemovePrinter(p.ID)
 	a.save()
 	a.refreshPrinters()
-	a.syncMonitors() // 停掉被删打印机的监测
+	a.syncMonitors()       // 停掉被删打印机的监测
+	a.publishPrinterList() // 列表有变 → 上报全量列表
 	a.flash("已删除「" + p.Name + "」")
 }

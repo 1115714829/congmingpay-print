@@ -59,7 +59,7 @@ func (p PrinterRef) Empty() bool {
 //
 // 目标二选一:printer(名称/ID 字符串,或 {name,ip,brand,width} 对象)或 gateway(IP 或 "usb")。
 // 目标未注册且带了 IP(printer.ip 或 gateway)→ **自动登记入库**(随打印建列表)再打印。
-// POST /api/print 的 body 可为单个对象(打一台)或对象数组(一次打多台,并发执行)。
+// MQTT 打印消息的 payload 可为单个对象(打一台)或对象数组(一次打多台,并发执行)。
 //
 // 用例(gateway 指定网口 IP,单台):
 //
@@ -86,29 +86,29 @@ func (p PrinterRef) Empty() bool {
 // 用例(多台,数组):[{"printer":{...},...必填字段...}, {"printer":{...},...}]
 type PrintRequest struct {
 	// 打印目标(与 gateway 二选一):字符串=打印机名/ID;对象={name,ip,brand,width},未注册则自动登记入库。
-	Printer PrinterRef `json:"printer" swaggertype:"string" example:"飞蛾1"`
+	Printer PrinterRef `json:"printer"`
 	// 打印目标网关(与 printer 二选一):网口 IP(如 "192.168.0.89",未注册则按 IP 自动登记入库)或 "usb"(首台 USB 机)。
-	Gateway string `json:"gateway" example:"192.168.0.89"`
+	Gateway string `json:"gateway"`
 	// 任务 ID:仅用于回执与日志对应,不用于去重(每条消息都会处理并打印)。
-	ID uint32 `json:"id" example:"1001"`
+	ID uint32 `json:"id"`
 	// 排版类型(默认 5):5=JSON 排版(contents 为排版元素数组,由服务端渲染);1=原始 ESC/POS(contents 为 base64 字符串,解码后直接下发)。
-	Type int `json:"type" example:"5"`
+	Type int `json:"type"`
 	// 纸宽 mm:58 或 80(可选,默认按打印机设置)。
-	PWidth int `json:"pWidth" example:"80"`
+	PWidth int `json:"pWidth"`
 	// 份数(可选,默认 1)。
-	PCopy int `json:"pCopy" example:"1"`
+	PCopy int `json:"pCopy"`
 	// 打印内容:type=5 为排版元素数组;type=1 为 base64 字符串(原始 ESC/POS)。切纸/走纸由顶层 cut、tailLines 统一处理,contents 内无需包含。
-	Contents json.RawMessage `json:"contents" swaggertype:"object"`
+	Contents json.RawMessage `json:"contents"`
 	// 蜂鸣:0=关 1=开(必填)。
-	Buzzer *int `json:"buzzer" example:"0"`
+	Buzzer *int `json:"buzzer"`
 	// 切刀:0=关 1=开(必填)。
-	Cut *int `json:"cut" example:"1"`
+	Cut *int `json:"cut"`
 	// 重打:0=普通,1=带醒目「重打」抬头(必填)。
-	Reprint *int `json:"reprint" example:"0"`
+	Reprint *int `json:"reprint"`
 	// 首部空行:0=默认(必填)。
-	HeadLines *int `json:"headLines" example:"0"`
+	HeadLines *int `json:"headLines"`
 	// 尾部空行:0=默认(必填)。
-	TailLines *int `json:"tailLines" example:"0"`
+	TailLines *int `json:"tailLines"`
 }
 
 // validate 校验必填字段(无降级):buzzer/cut/reprint/headLines/tailLines 均必传且合法。
@@ -141,17 +141,17 @@ func (r *PrintRequest) validate() error {
 	if *r.Reprint != 0 && *r.Reprint != 1 {
 		return fmt.Errorf("reprint 只能为 0 或 1")
 	}
+	// 范围校验(全部严格,不合规直接拒,无降级):
+	if *r.HeadLines < 0 || *r.HeadLines > 100 {
+		return fmt.Errorf("headLines 需在 0-100 之间")
+	}
+	if *r.TailLines < 0 || *r.TailLines > 100 {
+		return fmt.Errorf("tailLines 需在 0-100 之间")
+	}
+	if r.PWidth != 0 && r.PWidth != 58 && r.PWidth != 80 {
+		return fmt.Errorf("pWidth 需为 58 或 80(或不填)")
+	}
 	return nil
-}
-
-// PrintResponse 打印响应体。数组请求返回等长的响应数组(逐任务成功/失败)。
-type PrintResponse struct {
-	// 是否已受理。
-	OK bool `json:"ok" example:"true"`
-	// 任务号(受理成功时返回;可在打印队列查看)。
-	JobNo int `json:"jobNo" example:"1001"`
-	// 结果或失败原因。
-	Message string `json:"message" example:"已提交"`
 }
 
 // ParseRequests 解析打印消息 body:支持单个对象或对象数组。
@@ -225,9 +225,10 @@ func Process(cfg *config.Config, svc *printsvc.Service, req *PrintRequest) (int,
 		TailLines:     tail,
 	})
 
+	cloudID := req.ID // 值拷贝,任务终态事件回携此 id 上报打印结果
 	opts := &printsvc.Options{
 		Cut: &cut, Buzzer: &buzzer, Reprint: &reprint,
-		HeadLines: &head, TailLines: &tail,
+		HeadLines: &head, TailLines: &tail, CloudID: &cloudID,
 	}
 	copies := req.PCopy
 	if copies <= 0 {
@@ -275,12 +276,13 @@ func resolveTarget(cfg *config.Config, req *PrintRequest) (*model.Printer, bool,
 				return p, false, nil
 			}
 		}
+		// 自动登记必须能确定纸宽(printer.width → pWidth 回退链;两者皆缺/非法即拒,不兜底 80)
 		width := ref.Width
 		if width != 58 && width != 80 {
 			if req.PWidth == 58 || req.PWidth == 80 {
 				width = req.PWidth
 			} else {
-				width = 80
+				return nil, false, fmt.Errorf("无法确定纸宽: 自动登记新打印机需 printer.width 或 pWidth 为 58/80(收到 printer.width=%d、pWidth=%d)", ref.Width, req.PWidth)
 			}
 		}
 		name := strings.TrimSpace(ref.Name)

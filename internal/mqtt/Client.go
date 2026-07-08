@@ -1,7 +1,8 @@
 // Package mqtt 是云端通道:MQTT 3.1.1 客户端。
 //
 // 订阅「聪明付短商户号」主题收打印消息(复用 api.ParseRequests/Process),
-// 向 <短商户号>/report 发布打印回执与上下线状态(LWT)。明文连接、用户名/密码鉴权。
+// 向配置的「上报主题」(Settings.MQTT.ReportTopic)发布打印回执/打印结果/
+// 打印机在线离线/APP 上下线状态(LWT)。明文连接、用户名/密码鉴权。
 package mqtt
 
 import (
@@ -31,13 +32,15 @@ type Client struct {
 
 	id string // 本进程一次性随机后缀,拼进 ClientID 防同 ID 顶号
 
-	mu        sync.Mutex
-	cli       pmqtt.Client
-	merchant  string // 当前订阅的短商户号(已净化)
-	connected bool
-	lastErr   string
-	onChange  func()
-	onStatus  func() // 连接状态变化回调(UI 刷新状态标签用)
+	mu          sync.Mutex
+	cli         pmqtt.Client
+	merchant    string // 当前订阅的短商户号(已净化)
+	reportTopic string // 当前上报(发布)主题(配置 Settings.MQTT.ReportTopic)
+	enabled     bool   // 当前配置是否启用 MQTT(供 publish 决定未发送时是否落错误日志)
+	connected   bool
+	lastErr     string
+	onChange    func()
+	onStatus    func() // 连接状态变化回调(UI 刷新状态标签用)
 }
 
 // New 创建客户端(未连接;由 Start 按配置连接)。
@@ -68,20 +71,23 @@ func (c *Client) SetOnStatus(f func()) {
 	c.mu.Unlock()
 }
 
-// statusMsg 上下线状态(上行到 <短商户号>/report)。
+// statusMsg 上下线状态(上行到配置的上报主题)。
+// merchant=短商户号:服务端单主题一对多,所有上行靠它分辨来源(下同)。
 type statusMsg struct {
-	Type  string `json:"type"`  // "status"
-	Event string `json:"event"` // "online" / "offline"
-	TS    int64  `json:"ts,omitempty"`
+	Type     string `json:"type"`     // "status"
+	Merchant string `json:"merchant"` // 短商户号(来源身份)
+	Event    string `json:"event"`    // "online" / "offline"
+	TS       int64  `json:"ts,omitempty"`
 }
 
-// ackMsg 打印回执(上行到 <短商户号>/report)。
+// ackMsg 打印回执(上行到配置的上报主题)。id 恒回显(不加 omitempty,id=0 也保留字段)。
 type ackMsg struct {
-	Type    string `json:"type"` // "ack"
-	ID      uint32 `json:"id,omitempty"`
-	OK      bool   `json:"ok"`
-	JobNo   int    `json:"jobNo,omitempty"`
-	Message string `json:"message"`
+	Type     string `json:"type"`     // "ack"
+	Merchant string `json:"merchant"` // 短商户号(来源身份)
+	ID       uint32 `json:"id"`
+	OK       bool   `json:"ok"`
+	JobNo    int    `json:"jobNo,omitempty"`
+	Message  string `json:"message"`
 }
 
 // SanitizeMerchant 净化短商户号:去空格/Tab/换行等,仅保留字母数字与下划线。
@@ -127,11 +133,28 @@ func (c *Client) reconnect(m model.MQTT) {
 		go old.Disconnect(200)
 	}
 	merchant := SanitizeMerchant(m.Topic)
+	report := strings.TrimSpace(m.ReportTopic)
 	c.merchant = merchant
+	c.reportTopic = report
+	c.enabled = m.Enabled
 	c.lastErr = ""
-	if !m.Enabled || strings.TrimSpace(m.Broker) == "" || merchant == "" {
+	// 上报主题与 broker/短商户号同级必要:没有它,回执/结果/状态全部无处可发,不连接。
+	if !m.Enabled || strings.TrimSpace(m.Broker) == "" || merchant == "" || report == "" {
 		c.mu.Unlock()
-		logger.Info("MQTT 未启用或 broker/短商户号 为空,不连接")
+		logger.Info("MQTT 未启用或 broker/短商户号/上报主题 为空,不连接")
+		return
+	}
+	// 自订阅回环守卫:上报主题若等于订阅主题(短商户号),ack 会被自己收到→解析失败→再发失败 ack,
+	// 形成无限消息风暴。设置页已拦截,此处兜底手改配置文件的情况。
+	if report == merchant {
+		c.mu.Unlock()
+		logger.Errorf("MQTT 上报主题(%s)不能与订阅主题(短商户号)相同——会造成自订阅回环,不连接", report)
+		return
+	}
+	// 发布主题不得含通配符(设置页已挡,此处兜底手改配置):+/# 会致 broker 拒绝或断连循环。
+	if strings.ContainsAny(report, "+#") {
+		c.mu.Unlock()
+		logger.Errorf("MQTT 上报主题(%s)含通配符 +/#,非法发布主题,不连接", report)
 		return
 	}
 	cli := pmqtt.NewClient(c.buildOpts(m, merchant))
@@ -150,7 +173,7 @@ func (c *Client) reconnect(m model.MQTT) {
 }
 
 func (c *Client) buildOpts(m model.MQTT, merchant string) *pmqtt.ClientOptions {
-	will, _ := json.Marshal(statusMsg{Type: "status", Event: "offline"})
+	will, _ := json.Marshal(statusMsg{Type: "status", Merchant: merchant, Event: "offline"})
 	opts := pmqtt.NewClientOptions()
 	opts.AddBroker(brokerURL(m.Broker, m.Port))
 	opts.SetClientID("cmp-" + merchant + "-" + c.id) // 加随机后缀,避免同商户号多客户端互相顶号(顶号会表现为"用一会就不收")
@@ -166,7 +189,7 @@ func (c *Client) buildOpts(m model.MQTT, merchant string) *pmqtt.ClientOptions {
 	opts.SetConnectRetry(true)  // 首次连不上也后台重试
 	opts.SetConnectRetryInterval(5 * time.Second)
 	opts.SetMaxReconnectInterval(30 * time.Second)
-	opts.SetWill(merchant+"/report", string(will), 1, false) // 遗嘱:异常断开时 broker 代发离线
+	opts.SetWill(strings.TrimSpace(m.ReportTopic), string(will), 1, false) // 遗嘱:异常断开时 broker 代发离线(发到配置的上报主题)
 	opts.SetOnConnectHandler(func(cli pmqtt.Client) {
 		c.setConnected(true)
 		// 订阅与上线 publish 放后台 goroutine:t.Wait() 会阻塞 paho 回调线程,别卡在这里。
@@ -176,7 +199,8 @@ func (c *Client) buildOpts(m model.MQTT, merchant string) *pmqtt.ClientOptions {
 			} else {
 				logger.Infof("MQTT 已连接·订阅 %s", merchant)
 			}
-			c.publish(cli, statusMsg{Type: "status", Event: "online", TS: time.Now().UnixMilli()})
+			c.publish(cli, statusMsg{Type: "status", Merchant: merchant, Event: "online", TS: time.Now().UnixMilli()})
+			c.PublishPrinterList() // 上线基线:随 online 发一次全量打印机列表(含每台配置参数)
 		}()
 	})
 	opts.SetConnectionLostHandler(func(_ pmqtt.Client, err error) {
@@ -193,10 +217,11 @@ func (c *Client) onPrint(cli pmqtt.Client, msg pmqtt.Message) {
 	payload := msg.Payload()
 	logger.Infof("MQTT 收到消息 topic=%s 字节=%d", msg.Topic(), len(payload))
 
+	_, merchant, _ := c.snapshot()
 	reqs, wasArray, err := api.ParseRequests(payload)
 	if err != nil {
 		logger.Errorf("MQTT 打印消息解析失败: %v", err)
-		c.publish(cli, ackMsg{Type: "ack", OK: false, Message: "解析失败: " + err.Error()})
+		c.publish(cli, ackMsg{Type: "ack", Merchant: merchant, OK: false, Message: "解析失败: " + err.Error()})
 		return
 	}
 	logger.Infof("MQTT 解析出 %d 条打印请求(数组=%v)", len(reqs), wasArray)
@@ -211,15 +236,16 @@ func (c *Client) onPrint(cli pmqtt.Client, msg pmqtt.Message) {
 		}
 		if e != nil {
 			logger.Errorf("MQTT 打印失败 id=%d: %v", id, e)
-			c.publish(cli, ackMsg{Type: "ack", ID: id, OK: false, Message: e.Error()})
+			c.publish(cli, ackMsg{Type: "ack", Merchant: merchant, ID: id, OK: false, Message: e.Error()})
 			continue
 		}
 		logger.Infof("MQTT id=%d 已提交 任务#%d(登记/更新=%v)", id, no, reg)
-		c.publish(cli, ackMsg{Type: "ack", ID: id, OK: true, JobNo: no, Message: "已提交"})
+		c.publish(cli, ackMsg{Type: "ack", Merchant: merchant, ID: id, OK: true, JobNo: no, Message: "已提交"})
 	}
 	if changed {
 		c.save()
-		c.fireChange() // 有新增/更新打印机 → 保存并刷新列表 + 起监测
+		c.fireChange()         // 有新增/更新打印机 → 保存并刷新列表 + 起监测
+		c.PublishPrinterList() // 列表/参数有变 → 上报最新全量列表
 	}
 }
 
@@ -237,16 +263,36 @@ func reqTarget(r *api.PrintRequest) string {
 	return "(选中机/未指定)"
 }
 
-// publish 向 <短商户号>/report 发布(best-effort,未连则跳过)。
+// publish 向配置的「上报主题」发布(best-effort:不排队不补发,失败原因落日志)。
+// 未连接/主题为空时跳过;若配置为启用状态,跳过与失败都 logger.Errorf 记原因,做到有据可查。
+//
+// 必须用 IsConnectionOpen(仅真正 connected 才 true)而非只判 cli!=nil:
+// paho v1.4.3 在 ConnectRetry 下「连接中」状态 IsConnected() 也为 true,此时 QoS1 Publish
+// 只进内部存储、token 永不完成,且 CleanSession 连上后 persist.Reset() 直接丢弃——
+// 消息静默丢失、tok.Wait() goroutine 永久泄漏。判 IsConnectionOpen 把这类消息转为「跳过+日志」;
+// 判后瞬断的残余窗口由 WaitTimeout 兜底(超时记日志、goroutine 退出,不泄漏)。
 func (c *Client) publish(cli pmqtt.Client, v interface{}) {
 	c.mu.Lock()
-	merchant := c.merchant
+	topic := c.reportTopic
+	enabled := c.enabled
 	c.mu.Unlock()
-	if cli == nil || merchant == "" {
+	b, _ := json.Marshal(v)
+	if cli == nil || topic == "" || !cli.IsConnectionOpen() {
+		if enabled {
+			logger.Errorf("MQTT 上报未发送(未连接或上报主题为空): %s", b)
+		}
 		return
 	}
-	b, _ := json.Marshal(v)
-	cli.Publish(merchant+"/report", 1, false, b)
+	tok := cli.Publish(topic, 1, false, b)
+	go func() {
+		if !tok.WaitTimeout(30 * time.Second) {
+			logger.Errorf("MQTT 上报超时未确认(疑似发布时断线被丢弃) topic=%s: %s", topic, b)
+			return
+		}
+		if err := tok.Error(); err != nil {
+			logger.Errorf("MQTT 上报失败 topic=%s: %v(消息: %s)", topic, err, b)
+		}
+	}()
 }
 
 // TestConnect 一次性连接+断开,供设置页「连接测试」。返回耗时与错误。
@@ -302,11 +348,12 @@ func (c *Client) Status() (bool, string) {
 func (c *Client) Close() {
 	c.mu.Lock()
 	cli := c.cli
+	merchant := c.merchant
 	c.cli = nil
 	c.connected = false
 	c.mu.Unlock()
 	if cli != nil {
-		c.publish(cli, statusMsg{Type: "status", Event: "offline"})
+		c.publish(cli, statusMsg{Type: "status", Merchant: merchant, Event: "offline"})
 		cli.Disconnect(250)
 	}
 }

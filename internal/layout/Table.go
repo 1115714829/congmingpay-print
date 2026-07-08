@@ -3,37 +3,65 @@ package layout
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
 	"congmingpay/internal/escpos"
 )
 
-func (r *renderer) table(e *Element) {
-	names, pcts := parseThead(e.Thead)
-	if len(pcts) == 0 {
-		return
+func (r *renderer) table(e *Element) error {
+	names, pcts, err := parseThead(e.Thead)
+	if err != nil {
+		return err
+	}
+	sum := 0
+	for _, p := range pcts {
+		sum += p
+	}
+	if sum != 100 {
+		return fmt.Errorf("thead 列宽总和 %d%% ≠ 100%%", sum)
 	}
 
 	cpl := r.cpl
-	w, _ := sizeMag(e.Size)
+	w, _, err := sizeMag(e.Size)
+	if err != nil {
+		return err
+	}
 	if w > 0 {
 		cpl = cpl / (w + 1) // 放大后每行字符变少
 	}
 
-	// 按百分比分配列字符宽,末列吸收误差补足到 cpl
+	// 按百分比分配列字符宽,末列吸收误差补足到 cpl(数据已校验合法,此处仅为取整补偿)
 	cols := make([]int, len(pcts))
-	sum := 0
+	used := 0
 	for i, p := range pcts {
 		cols[i] = p * cpl / 100
 		if cols[i] < 1 {
 			cols[i] = 1
 		}
-		sum += cols[i]
+		used += cols[i]
 	}
-	cols[len(cols)-1] += cpl - sum
+	cols[len(cols)-1] += cpl - used
 	if cols[len(cols)-1] < 1 {
 		cols[len(cols)-1] = 1
+	}
+
+	// 渲染前逐行校验:单元格数须等于列数、值须为标量(string/number/bool)
+	rows := make([][]string, len(e.Tbody))
+	for ri, row := range e.Tbody {
+		if len(row) != len(pcts) {
+			return fmt.Errorf("tbody 第 %d 行有 %d 个单元格,与列数 %d 不符", ri+1, len(row), len(pcts))
+		}
+		cells := make([]string, len(row))
+		for ci, v := range row {
+			s, err := cellString(v)
+			if err != nil {
+				return fmt.Errorf("tbody 第 %d 行第 %d 列%v", ri+1, ci+1, err)
+			}
+			cells[ci] = s
+		}
+		rows[ri] = cells
 	}
 
 	if w > 0 {
@@ -45,8 +73,8 @@ func (r *renderer) table(e *Element) {
 			r.b.Line(strings.Repeat("-", cpl))
 		}
 	}
-	for _, row := range e.Tbody {
-		r.tableRow(cellsToStrings(row), cols)
+	for _, cells := range rows {
+		r.tableRow(cells, cols)
 		if e.LineDiv == 1 {
 			r.b.Line(strings.Repeat("-", cpl))
 		}
@@ -57,6 +85,7 @@ func (r *renderer) table(e *Element) {
 	if w > 0 {
 		r.b.SetSize(0, 0)
 	}
+	return nil
 }
 
 // tableRow 渲染一行:各单元格按列宽换行,行内多行左对齐拼接。
@@ -122,73 +151,84 @@ func wrapByWidth(s string, cw int) []string {
 	return lines
 }
 
-// parseThead 解析 thead:对象{列名:宽%}(保序)或数组[宽%]。
-func parseThead(raw json.RawMessage) (names []string, pcts []int) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
+// parseThead 解析 thead:对象{列名:宽%}(保序)或字符串数组[宽%];形态/取值非法即报错。
+func parseThead(raw json.RawMessage) (names []string, pcts []int, err error) {
 	// 数组:["50%","20%",...]
 	var arr []string
 	if json.Unmarshal(raw, &arr) == nil {
 		for _, p := range arr {
-			pcts = append(pcts, parsePct(p))
+			n, err := parsePct(p)
+			if err != nil {
+				return nil, nil, err
+			}
+			pcts = append(pcts, n)
 		}
-		return nil, pcts
+		if len(pcts) == 0 {
+			return nil, nil, fmt.Errorf("thead 为空(至少 1 列)")
+		}
+		return nil, pcts, nil
 	}
 	// 对象:保序读取键与值
 	dec := json.NewDecoder(bytes.NewReader(raw))
-	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
-		return nil, nil
+	if t, err2 := dec.Token(); err2 != nil || t != json.Delim('{') {
+		return nil, nil, fmt.Errorf("thead 需为对象{列名:\"宽%%\"}或字符串数组[\"宽%%\"]")
 	}
 	for dec.More() {
-		keyTok, err := dec.Token()
-		if err != nil {
-			break
+		keyTok, err2 := dec.Token()
+		if err2 != nil {
+			return nil, nil, fmt.Errorf("thead 解析失败: %v", err2)
 		}
 		key, _ := keyTok.(string)
-		valTok, err := dec.Token()
-		if err != nil {
-			break
+		valTok, err2 := dec.Token()
+		if err2 != nil {
+			return nil, nil, fmt.Errorf("thead 解析失败: %v", err2)
 		}
-		val, _ := valTok.(string)
+		val, ok := valTok.(string)
+		if !ok {
+			return nil, nil, fmt.Errorf("thead 第 %d 列宽度需为字符串(如 \"50%%\")", len(pcts)+1)
+		}
+		n, err2 := parsePct(val)
+		if err2 != nil {
+			return nil, nil, err2
+		}
 		names = append(names, key)
-		pcts = append(pcts, parsePct(val))
+		pcts = append(pcts, n)
 	}
-	return names, pcts
-}
-
-func parsePct(s string) int {
-	s = strings.TrimSpace(s)
-	s = strings.TrimSuffix(s, "%")
-	n, _ := strconv.Atoi(strings.TrimSpace(s))
-	return n
-}
-
-func cellsToStrings(row []interface{}) []string {
-	out := make([]string, len(row))
-	for i, v := range row {
-		out[i] = cellString(v)
+	if len(pcts) == 0 {
+		return nil, nil, fmt.Errorf("thead 为空(至少 1 列)")
 	}
-	return out
+	return names, pcts, nil
 }
 
-func cellString(v interface{}) string {
+// parsePct 解析 "85%"/"85" 为整数百分比;非整数或超出 1-100 即报错(容忍前后空白与 % 后缀)。
+func parsePct(s string) (int, error) {
+	t := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "%"))
+	n, err := strconv.Atoi(t)
+	if err != nil {
+		return 0, fmt.Errorf("thead 列宽 %q 非法(需 1-100 的整数百分比)", s)
+	}
+	if n < 1 || n > 100 {
+		return 0, fmt.Errorf("thead 列宽 %d%% 超出 1-100", n)
+	}
+	return n, nil
+}
+
+// cellString 把单元格值转为字符串;仅 string/number/bool 合法,null/对象/数组报错。
+func cellString(v interface{}) (string, error) {
 	switch x := v.(type) {
 	case string:
-		return x
+		return x, nil
 	case float64:
 		if x == float64(int64(x)) {
-			return strconv.FormatInt(int64(x), 10)
+			return strconv.FormatInt(int64(x), 10), nil
 		}
-		return strconv.FormatFloat(x, 'f', -1, 64)
+		return strconv.FormatFloat(x, 'f', -1, 64), nil
 	case bool:
 		if x {
-			return "true"
+			return "true", nil
 		}
-		return "false"
-	case nil:
-		return ""
+		return "false", nil
 	default:
-		return ""
+		return "", fmt.Errorf("值非法(需字符串/数字/布尔)")
 	}
 }
