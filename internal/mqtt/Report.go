@@ -10,88 +10,89 @@ import (
 	"congmingpay/internal/printsvc"
 )
 
-// 本文件是上行「打印结果 / 打印机在线离线」的发布口。
-// 消息 type 与字段为本 APP 约定,待与云端最终对齐;全部发往配置的上报主题(best-effort,失败原因落日志)。
+// 本文件是两类上行消息(report/state)的结构与发布口。
+// 消息 type 与字段为本服务与服务端的约定;全部发往配置的上报主题(best-effort,失败原因落日志)。
 
-// resultMsg 打印结果回执(任务终态:成功/失败各发一条;手动重打再次到终态会再发一条,同 jobNo)。
-type resultMsg struct {
-	Type     string `json:"type"`     // "result"
-	Merchant string `json:"merchant"` // 短商户号(来源身份)
-	ID       uint32 `json:"id"`       // 对应打印消息的 id(恒回显)
-	JobNo    int    `json:"jobNo"`
-	OK       bool   `json:"ok"`      // true=打印成功 false=打印失败
-	Printer  string `json:"printer"` // 打印机名称
-	Message  string `json:"message"` // 成功="打印成功";失败=原因
-	TS       int64  `json:"ts"`
-}
+// eventAccepted 是受理成功事件(在 mqtt 层产生;done/failed/waiting 由 printsvc 事件产生)。
+const eventAccepted = "accepted"
 
-// printerState 是单台打印机的在线状态条目(printerStatusMsg.Printers 元素)。
-type printerState struct {
-	PrinterID string `json:"printerId"`
-	Printer   string `json:"printer"`           // 名称
-	Conn      string `json:"conn"`              // "network" / "usb"
-	IP        string `json:"ip,omitempty"`      // 网口
-	Port      string `json:"port,omitempty"`    // 网口(空则为默认 9100)
-	USBName   string `json:"usbName,omitempty"` // USB 驱动名
-	Online    bool   `json:"online"`
-	Detail    string `json:"detail"` // 人类可读描述,如 "就绪(ping 3ms)" / "离线(ping 超时/不可达)"
-}
-
-// printerStatusMsg 打印机在线/离线上报:一条消息内用数组承载,支持多设备状态。
-// 有状态变动立即上报(当前每次含变动的那台;数组格式为将来批量预留)。
-type printerStatusMsg struct {
-	Type     string         `json:"type"`     // "printerStatus"
-	Merchant string         `json:"merchant"` // 短商户号(来源身份)
-	Printers []printerState `json:"printers"`
-	TS       int64          `json:"ts"`
-}
-
-// printerEntry 是打印机列表上报的单台条目(含每台配置参数;不含在线态——在线以 printerStatus 流为准)。
-type printerEntry struct {
+// reportPrinter 是 report 消息中的打印机身份段。
+type reportPrinter struct {
 	PrinterID string `json:"printerId"`
 	Printer   string `json:"printer"` // 名称
 	Brand     string `json:"brand"`
-	Width     int    `json:"width"`             // 58 / 80
+	Width     int    `json:"width"`
 	Conn      string `json:"conn"`              // "network" / "usb"
 	IP        string `json:"ip,omitempty"`      // 网口
-	Port      string `json:"port,omitempty"`    // 网口(空则为默认 9100)
+	Port      string `json:"port,omitempty"`    // 网口
 	USBName   string `json:"usbName,omitempty"` // USB 驱动名
-	Buzzer    bool   `json:"buzzer"`            // 每台配置参数(cloud authoritative,随打印消息覆盖)
-	Cut       bool   `json:"cut"`
-	HeadLines int    `json:"headLines"`
-	TailLines int    `json:"tailLines"`
-	LastPrint string `json:"lastPrint,omitempty"`
 }
 
-// printerListMsg 打印机列表上报:全量快照,服务器以最新一条为准(幂等)。
-// 触发:连接成功基线 / 云端登记或参数覆盖 / UI 新增、删除、属性保存 / JSON 测试造成变更。
-type printerListMsg struct {
-	Type     string         `json:"type"`     // "printerList"
-	Merchant string         `json:"merchant"` // 短商户号(来源身份)
-	Printers []printerEntry `json:"printers"`
+// reportParams 是 report(accepted)消息携带的本单生效参数。
+type reportParams struct {
+	Buzzer      int `json:"buzzer"`
+	Cut         int `json:"cut"`
+	Reprint     int `json:"reprint"`
+	HeadLines   int `json:"headLines"`
+	TailLines   int `json:"tailLines"`
+	PWidth      int `json:"pWidth"` // 实际渲染纸宽(58/80)
+	PCopy       int `json:"pCopy"`  // 实际打印份数(≥1)
+	ContentType int `json:"contentType"`
+}
+
+// reportMsg 打印回执:event=accepted/waiting/done/failed,统一结构。
+type reportMsg struct {
+	Type     string         `json:"type"` // "report"
+	Merchant string         `json:"merchant"`
+	Event    string         `json:"event"`
+	ID       uint32         `json:"id"` // 请求 id,恒回显(整条解析失败时为 0)
+	JobNo    int            `json:"jobNo,omitempty"`
+	Code     int            `json:"code"` // 0=成功;非 0 见接口文档错误码表
+	Message  string         `json:"message"`
+	Printer  *reportPrinter `json:"printer,omitempty"` // 目标已解析时携带
+	Params   *reportParams  `json:"params,omitempty"`  // 仅 accepted 携带
 	TS       int64          `json:"ts"`
 }
 
-// PublishJobResult 上报一个打印任务的最终结果(成功/失败)。MQTT 未启用时静默跳过。
-func (c *Client) PublishJobResult(ev printsvc.JobFinalEvent) {
-	cli, merchant, enabled := c.snapshot()
-	if !enabled {
-		return
+// statePrinter 是 state 消息中的单台打印机条目(配置参数 + 在线状态合一)。
+type statePrinter struct {
+	PrinterID string `json:"printerId"`
+	Printer   string `json:"printer"`
+	Brand     string `json:"brand"`
+	Width     int    `json:"width"`
+	Conn      string `json:"conn"`
+	IP        string `json:"ip,omitempty"`
+	Port      string `json:"port,omitempty"`
+	USBName   string `json:"usbName,omitempty"`
+	Online    bool   `json:"online"`
+	Detail    string `json:"detail,omitempty"`
+	Buzzer    bool   `json:"buzzer"`
+	Cut       bool   `json:"cut"`
+	HeadLines int    `json:"headLines"`
+	TailLines int    `json:"tailLines"` // 尾部走纸偏移量(本地属性页允许负值)
+	LastPrint string `json:"lastPrint,omitempty"`
+}
+
+// stateMsg 状态快照:服务在线 + 全部打印机全量;离线为简版(printers 省略,遗嘱同)。
+type stateMsg struct {
+	Type     string         `json:"type"` // "state"
+	Merchant string         `json:"merchant"`
+	Online   bool           `json:"online"`
+	Printers []statePrinter `json:"printers,omitempty"`
+	TS       int64          `json:"ts,omitempty"`
+}
+
+// reportPrinterOf 由打印机快照构造 report 身份段。
+func reportPrinterOf(p *model.Printer) *reportPrinter {
+	rp := &reportPrinter{
+		PrinterID: p.ID, Printer: p.Name, Brand: p.BrandLabel(), Width: p.Width, Conn: string(p.Conn),
 	}
-	msg := resultMsg{
-		Type: "result", Merchant: merchant, JobNo: ev.JobNo, OK: ev.OK,
-		Printer: ev.Printer, TS: time.Now().UnixMilli(),
-	}
-	if ev.CloudID != nil {
-		msg.ID = *ev.CloudID
-	}
-	if ev.OK {
-		msg.Message = "打印成功"
+	if p.Conn == model.ConnUSB {
+		rp.USBName = p.USBName
 	} else {
-		msg.Message = ev.Err
+		rp.IP, rp.Port = p.IP, p.Port
 	}
-	logger.Infof("MQTT 上报打印结果 id=%d 任务#%d ok=%v(%s %s)%s", msg.ID, ev.JobNo, ev.OK, ev.Printer, ev.Target, failSuffix(ev))
-	c.publish(cli, msg)
+	return rp
 }
 
 // snapshot 取当前客户端、短商户号与启用状态(锁内快照)。
@@ -101,65 +102,55 @@ func (c *Client) snapshot() (pmqtt.Client, string, bool) {
 	return c.cli, c.merchant, c.enabled
 }
 
-func failSuffix(ev printsvc.JobFinalEvent) string {
-	if ev.OK {
-		return ""
-	}
-	return ": " + ev.Err
-}
-
-// PublishPrinterStatus 上报一台打印机的在线/离线状态(在线布尔边沿触发,含启动首查基线)。
-// MQTT 未启用时静默跳过。
-func (c *Client) PublishPrinterStatus(p *model.Printer, online bool, detail string) {
+// PublishJobEvent 上报任务事件(done/failed/waiting → report)。MQTT 未启用时静默跳过。
+func (c *Client) PublishJobEvent(ev printsvc.JobEvent) {
 	cli, merchant, enabled := c.snapshot()
 	if !enabled {
 		return
 	}
-	st := printerState{
-		PrinterID: p.ID, Printer: p.Name, Conn: string(p.Conn),
-		Online: online, Detail: detail,
+	msg := reportMsg{
+		Type: "report", Merchant: merchant, Event: ev.Event,
+		JobNo: ev.JobNo, Code: ev.Code, TS: time.Now().UnixMilli(),
+		Printer: reportPrinterOf(&ev.Printer),
 	}
-	if p.Conn == model.ConnUSB {
-		st.USBName = p.USBName
+	if ev.CloudID != nil {
+		msg.ID = *ev.CloudID
+	}
+	if ev.Event == printsvc.EventDone {
+		msg.Message = "打印成功"
 	} else {
-		st.IP = p.IP
-		st.Port = p.Port
+		msg.Message = ev.Err
 	}
-	msg := printerStatusMsg{
-		Type: "printerStatus", Merchant: merchant, Printers: []printerState{st}, TS: time.Now().UnixMilli(),
-	}
-	logger.Infof("MQTT 上报打印机状态 [id=%s] 名称『%s』%s online=%v(%s)", p.ID, p.Name, p.Address(), online, detail)
+	logger.Infof("MQTT 上报 report event=%s id=%d 任务#%d code=%d(%s %s)", ev.Event, msg.ID, ev.JobNo, ev.Code, ev.Printer.Name, ev.Printer.Target())
 	c.publish(cli, msg)
 }
 
-// PublishPrinterList 上报当前打印机列表全量快照(含每台配置参数)。MQTT 未启用时静默跳过。
-// 触发点:连接成功基线 / 云端登记或参数覆盖 / UI 新增、删除、属性保存 / JSON 测试造成变更。
-func (c *Client) PublishPrinterList() {
+// PublishState 上报状态快照(服务在线 + 全部打印机配置与在线态,全量幂等)。MQTT 未启用时静默跳过。
+func (c *Client) PublishState() {
 	cli, merchant, enabled := c.snapshot()
 	if !enabled {
 		return
 	}
-	// 值拷贝快照:锁内深拷贝,读侧不碰共享指针(与 UI 属性写、云端参数覆盖并发安全)。
-	list := c.cfg.PrinterSnapshots()
-	entries := make([]printerEntry, 0, len(list))
+	list := c.cfg.PrinterSnapshots() // 锁内值拷贝,与 UI/云端写并发安全
+	online := c.svc.OnlineSnapshot()
+	printers := make([]statePrinter, 0, len(list))
 	for i := range list {
-		p := &list[i] // 指向本地副本
-		e := printerEntry{
-			PrinterID: p.ID, Printer: p.Name, Brand: p.BrandLabel(), Width: p.Width,
-			Conn: string(p.Conn), Buzzer: p.BuzzerEnabled, Cut: p.Cuts(),
-			HeadLines: p.HeadLines, TailLines: p.TailLines, LastPrint: p.LastPrint,
+		p := &list[i]
+		sp := statePrinter{
+			PrinterID: p.ID, Printer: p.Name, Brand: p.BrandLabel(), Width: p.Width, Conn: string(p.Conn),
+			Buzzer: p.BuzzerEnabled, Cut: p.Cuts(), HeadLines: p.HeadLines, TailLines: p.TailLines, LastPrint: p.LastPrint,
 		}
 		if p.Conn == model.ConnUSB {
-			e.USBName = p.USBName
+			sp.USBName = p.USBName
 		} else {
-			e.IP = p.IP
-			e.Port = p.Port
+			sp.IP, sp.Port = p.IP, p.Port
 		}
-		entries = append(entries, e)
+		if oi, ok := online[p.ID]; ok {
+			sp.Online, sp.Detail = oi.Online, oi.Detail
+		}
+		printers = append(printers, sp)
 	}
-	msg := printerListMsg{
-		Type: "printerList", Merchant: merchant, Printers: entries, TS: time.Now().UnixMilli(),
-	}
-	logger.Infof("MQTT 上报打印机列表(%d 台)", len(entries))
+	msg := stateMsg{Type: "state", Merchant: merchant, Online: true, Printers: printers, TS: time.Now().UnixMilli()}
+	logger.Infof("MQTT 上报 state(%d 台打印机)", len(printers))
 	c.publish(cli, msg)
 }

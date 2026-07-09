@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"congmingpay/internal/config"
 	"congmingpay/internal/docserver"
@@ -27,6 +28,10 @@ type App struct {
 
 	mw   *walk.MainWindow
 	tray *walk.NotifyIcon
+
+	// 系统通知(Notify.go)
+	notifyReady  atomic.Bool // 托盘就绪后置 true;守卫早于托盘/晚于退出的通知投递
+	mqttNotifySt int         // MQTT 通知边沿状态:0=中性(未启用/未定) 1=已连 2=已断;仅 UI 线程读写
 
 	navPrinters  *walk.PushButton
 	navJobs      *walk.PushButton
@@ -53,18 +58,19 @@ type App struct {
 	monitorsMu sync.Mutex
 
 	// 设置视图
-	setName     *walk.LineEdit
-	mqttEnabled *walk.CheckBox
-	mqttBroker  *walk.LineEdit
-	mqttPort    *walk.LineEdit
-	mqttUser    *walk.LineEdit
-	mqttPass    *walk.LineEdit
-	mqttTopic   *walk.LineEdit
-	mqttReport  *walk.LineEdit // 上报(发布)主题,启用 MQTT 时必填
-	mqttStatus  *walk.Label
-	docEnabled  *walk.CheckBox
-	docPort     *walk.LineEdit
-	docURL      *walk.Label
+	setName       *walk.LineEdit
+	notifyEnabled *walk.CheckBox
+	mqttEnabled   *walk.CheckBox
+	mqttBroker    *walk.LineEdit
+	mqttPort      *walk.LineEdit
+	mqttUser      *walk.LineEdit
+	mqttPass      *walk.LineEdit
+	mqttTopic     *walk.LineEdit
+	mqttReport    *walk.LineEdit // 上报(发布)主题,启用 MQTT 时必填
+	mqttStatus    *walk.Label
+	docEnabled    *walk.CheckBox
+	docPort       *walk.LineEdit
+	docURL        *walk.Label
 }
 
 // NewApp 创建界面控制器。
@@ -133,6 +139,8 @@ func (a *App) Run() error {
 	}
 	if err := a.setupTray(icon); err != nil {
 		logger.Errorf("托盘初始化失败: %v", err)
+	} else {
+		a.notifyReady.Store(true) // 托盘就绪,系统通知可投递
 	}
 
 	// 任务状态变化 → marshal 回 UI 线程刷新
@@ -155,6 +163,7 @@ func (a *App) Run() error {
 		a.mc.SetOnStatus(func() {
 			a.mw.Synchronize(func() {
 				a.refreshMqttStatus()
+				a.mqttNotifyEdge() // 断线/恢复系统通知(边沿去重)
 			})
 		})
 	}
@@ -164,6 +173,7 @@ func (a *App) Run() error {
 	a.syncMonitors() // 为每台已注册打印机起后台持续 ping 监测
 
 	a.mw.Run()
+	a.notifyReady.Store(false) // 窗口已退出,后续通知直接丢弃
 	a.stopAllMonitors()
 	return nil
 }
@@ -239,12 +249,5 @@ func (a *App) flash(msg string) {
 func (a *App) save() {
 	if err := a.cfg.Save(a.cfgPath); err != nil {
 		logger.Errorf("保存配置失败: %v", err)
-	}
-}
-
-// publishPrinterList 打印机列表/参数变更后上报全量列表(mc 未建或 MQTT 未启用时自动跳过)。
-func (a *App) publishPrinterList() {
-	if a.mc != nil {
-		a.mc.PublishPrinterList()
 	}
 }

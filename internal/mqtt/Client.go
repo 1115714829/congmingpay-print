@@ -1,13 +1,14 @@
 // Package mqtt 是云端通道:MQTT 3.1.1 客户端。
 //
-// 订阅「聪明付短商户号」主题收打印消息(复用 api.ParseRequests/Process),
-// 向配置的「上报主题」(Settings.MQTT.ReportTopic)发布打印回执/打印结果/
-// 打印机在线离线/APP 上下线状态(LWT)。明文连接、用户名/密码鉴权。
+// 订阅「聪明付短商户号」主题收打印消息与查询消息(复用 api.ParseRequests/Process),
+// 向配置的「上报主题」发布两类上行:report(打印回执,accepted/waiting/done/failed)
+// 与 state(服务在线+全部打印机状态快照;**定时上报**——连接成功立即一条、此后每
+// stateInterval 一条,另可由下行 {"query":"printers"} 按需拉取;离线经 LWT 发简版)。
+// 明文连接、用户名/密码鉴权。
 package mqtt
 
 import (
-	"crypto/rand"
-	"encoding/hex"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -19,18 +20,21 @@ import (
 
 	"congmingpay/internal/api"
 	"congmingpay/internal/config"
+	"congmingpay/internal/errcode"
 	"congmingpay/internal/logger"
 	"congmingpay/internal/model"
 	"congmingpay/internal/printsvc"
 )
 
+// stateInterval 是 state 状态快照的定时上报间隔(包级 var 仅供测试临时调小,产品固定 1 分钟)。
+var stateInterval = time.Minute
+
 // Client 是云端 MQTT 客户端(唯一云端通道)。
+// ClientID 直接使用短商户号:同商户号多客户端的重复问题由云端从根源杜绝,程序不做防重复处理。
 type Client struct {
 	cfg     *config.Config
 	svc     *printsvc.Service
 	cfgPath string
-
-	id string // 本进程一次性随机后缀,拼进 ClientID 防同 ID 顶号
 
 	mu          sync.Mutex
 	cli         pmqtt.Client
@@ -40,21 +44,13 @@ type Client struct {
 	connected   bool
 	lastErr     string
 	onChange    func()
-	onStatus    func() // 连接状态变化回调(UI 刷新状态标签用)
+	onStatus    func()        // 连接状态变化回调(UI 刷新状态标签用)
+	stopTick    chan struct{} // 定时 state 上报 goroutine 的停止信号(随连接生命周期)
 }
 
 // New 创建客户端(未连接;由 Start 按配置连接)。
 func New(cfg *config.Config, svc *printsvc.Service, cfgPath string) *Client {
-	return &Client{cfg: cfg, svc: svc, cfgPath: cfgPath, id: randSuffix()}
-}
-
-// randSuffix 返回一次性 4 字节 hex(进程内稳定),用于让 ClientID 跨进程/跨机唯一。
-func randSuffix() string {
-	b := make([]byte, 4)
-	if _, err := rand.Read(b); err != nil {
-		return "0"
-	}
-	return hex.EncodeToString(b)
+	return &Client{cfg: cfg, svc: svc, cfgPath: cfgPath}
 }
 
 // SetOnChange 设置打印机列表变化回调(UI 刷新用)。
@@ -69,25 +65,6 @@ func (c *Client) SetOnStatus(f func()) {
 	c.mu.Lock()
 	c.onStatus = f
 	c.mu.Unlock()
-}
-
-// statusMsg 上下线状态(上行到配置的上报主题)。
-// merchant=短商户号:服务端单主题一对多,所有上行靠它分辨来源(下同)。
-type statusMsg struct {
-	Type     string `json:"type"`     // "status"
-	Merchant string `json:"merchant"` // 短商户号(来源身份)
-	Event    string `json:"event"`    // "online" / "offline"
-	TS       int64  `json:"ts,omitempty"`
-}
-
-// ackMsg 打印回执(上行到配置的上报主题)。id 恒回显(不加 omitempty,id=0 也保留字段)。
-type ackMsg struct {
-	Type     string `json:"type"`     // "ack"
-	Merchant string `json:"merchant"` // 短商户号(来源身份)
-	ID       uint32 `json:"id"`
-	OK       bool   `json:"ok"`
-	JobNo    int    `json:"jobNo,omitempty"`
-	Message  string `json:"message"`
 }
 
 // SanitizeMerchant 净化短商户号:去空格/Tab/换行等,仅保留字母数字与下划线。
@@ -127,10 +104,19 @@ func (c *Client) Reload(m model.MQTT) { c.reconnect(m) }
 func (c *Client) reconnect(m model.MQTT) {
 	c.mu.Lock()
 	if c.cli != nil {
-		old := c.cli
+		old, oldMerchant, oldTopic := c.cli, c.merchant, c.reportTopic
 		c.cli = nil
 		c.connected = false
-		go old.Disconnect(200)
+		// 旧身份先发简版离线再断开:干净 DISCONNECT 会让 broker 丢弃遗嘱,
+		// 停用/换配置若不主动发,云端将永久滞留 online:true。
+		go func() {
+			sendOffline(old, oldMerchant, oldTopic)
+			old.Disconnect(250)
+		}()
+	}
+	if c.stopTick != nil {
+		close(c.stopTick)
+		c.stopTick = nil
 	}
 	merchant := SanitizeMerchant(m.Topic)
 	report := strings.TrimSpace(m.ReportTopic)
@@ -159,9 +145,11 @@ func (c *Client) reconnect(m model.MQTT) {
 	}
 	cli := pmqtt.NewClient(c.buildOpts(m, merchant))
 	c.cli = cli
+	c.stopTick = make(chan struct{})
+	go c.stateLoop(c.stopTick) // 定时 state 上报,随本次连接生命周期
 	c.mu.Unlock()
 
-	logger.Infof("MQTT 连接 %s(短商户号 %s,ClientID cmp-%s-%s)…", brokerURL(m.Broker, m.Port), merchant, merchant, c.id)
+	logger.Infof("MQTT 连接 %s(短商户号/ClientID %s)…", brokerURL(m.Broker, m.Port), merchant)
 	tok := cli.Connect()
 	go func() {
 		tok.Wait()
@@ -173,10 +161,11 @@ func (c *Client) reconnect(m model.MQTT) {
 }
 
 func (c *Client) buildOpts(m model.MQTT, merchant string) *pmqtt.ClientOptions {
-	will, _ := json.Marshal(statusMsg{Type: "status", Merchant: merchant, Event: "offline"})
+	// 遗嘱为连接时固化的静态内容:简版 state(仅服务离线,不含打印机数组)。
+	will, _ := json.Marshal(stateMsg{Type: "state", Merchant: merchant, Online: false})
 	opts := pmqtt.NewClientOptions()
 	opts.AddBroker(brokerURL(m.Broker, m.Port))
-	opts.SetClientID("cmp-" + merchant + "-" + c.id) // 加随机后缀,避免同商户号多客户端互相顶号(顶号会表现为"用一会就不收")
+	opts.SetClientID(merchant) // ClientID=短商户号(同商户号重复由云端根源杜绝)
 	if m.Username != "" {
 		opts.SetUsername(m.Username)
 	}
@@ -199,8 +188,7 @@ func (c *Client) buildOpts(m model.MQTT, merchant string) *pmqtt.ClientOptions {
 			} else {
 				logger.Infof("MQTT 已连接·订阅 %s", merchant)
 			}
-			c.publish(cli, statusMsg{Type: "status", Merchant: merchant, Event: "online", TS: time.Now().UnixMilli()})
-			c.PublishPrinterList() // 上线基线:随 online 发一次全量打印机列表(含每台配置参数)
+			c.PublishState() // 上线首拍(定时流起点):一条 state 全量(服务在线 + 全部打印机配置与在线态)
 		}()
 	})
 	opts.SetConnectionLostHandler(func(_ pmqtt.Client, err error) {
@@ -211,41 +199,105 @@ func (c *Client) buildOpts(m model.MQTT, merchant string) *pmqtt.ClientOptions {
 	return opts
 }
 
-// onPrint 收到打印消息:复用 api.ParseRequests/Process,逐条处理并回执。
+// stateLoop 定时上报 state:每 stateInterval 一条全量快照(连接首拍由 OnConnect 发)。
+// 未启用/断线时静默跳过——断线本身已有连接日志,不逐拍刷错误。
+func (c *Client) stateLoop(stop <-chan struct{}) {
+	t := time.NewTicker(stateInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			cli, _, enabled := c.snapshot()
+			if !enabled || cli == nil || !cli.IsConnectionOpen() {
+				continue
+			}
+			c.PublishState()
+		}
+	}
+}
+
+// parseQuery 探测下行 payload 是否为查询消息:单对象且顶层 query 为非空字符串。
+func parseQuery(payload []byte) (string, bool) {
+	t := bytes.TrimSpace(payload)
+	if len(t) == 0 || t[0] != '{' {
+		return "", false
+	}
+	var probe struct {
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal(t, &probe); err != nil || probe.Query == "" {
+		return "", false
+	}
+	return probe.Query, true
+}
+
+// onPrint 收到下行消息:含顶层 query 字段的单对象为查询(printers=拉取全量 state);
+// 其余复用 api.ParseRequests/Process,逐条处理并回执。
 // 【每条都打】不做 id 去重——收到消息即打印/登记(与 UI「JSON测试」一致);id 仅用于回执/日志对应。
 func (c *Client) onPrint(cli pmqtt.Client, msg pmqtt.Message) {
 	payload := msg.Payload()
 	logger.Infof("MQTT 收到消息 topic=%s 字节=%d", msg.Topic(), len(payload))
 
 	_, merchant, _ := c.snapshot()
+	if q, isQuery := parseQuery(payload); isQuery {
+		if q == "printers" {
+			logger.Info("MQTT 收到查询 printers → 回发全量 state")
+			c.PublishState()
+		} else {
+			logger.Errorf("MQTT 不支持的 query: %q", q)
+			c.publish(cli, reportMsg{Type: "report", Merchant: merchant, Event: printsvc.EventFailed,
+				Code: errcode.UnsupportedQuery, Message: `不支持的 query: ` + q + `(支持 "printers")`, TS: time.Now().UnixMilli()})
+		}
+		return
+	}
 	reqs, wasArray, err := api.ParseRequests(payload)
 	if err != nil {
 		logger.Errorf("MQTT 打印消息解析失败: %v", err)
-		c.publish(cli, ackMsg{Type: "ack", Merchant: merchant, OK: false, Message: "解析失败: " + err.Error()})
+		c.publish(cli, reportMsg{Type: "report", Merchant: merchant, Event: printsvc.EventFailed,
+			Code: errcode.ParseFailed, Message: "解析失败: " + err.Error(), TS: time.Now().UnixMilli()})
 		return
 	}
 	logger.Infof("MQTT 解析出 %d 条打印请求(数组=%v)", len(reqs), wasArray)
 
 	changed := false
 	for i := range reqs {
-		id := reqs[i].ID
-		logger.Infof("MQTT 处理 id=%d 目标=%s type=%d", id, reqTarget(&reqs[i]), reqs[i].Type)
-		no, reg, e := api.Process(c.cfg, c.svc, &reqs[i])
+		req := &reqs[i]
+		id := req.ID
+		logger.Infof("MQTT 处理 id=%d 目标=%s type=%d", id, reqTarget(req), req.Type)
+		res, reg, e := api.Process(c.cfg, c.svc, req)
 		if reg {
 			changed = true
 		}
 		if e != nil {
-			logger.Errorf("MQTT 打印失败 id=%d: %v", id, e)
-			c.publish(cli, ackMsg{Type: "ack", Merchant: merchant, ID: id, OK: false, Message: e.Error()})
+			logger.Errorf("MQTT 打印受理失败 id=%d code=%d: %v", id, errcode.CodeOf(e), e)
+			c.publish(cli, reportMsg{Type: "report", Merchant: merchant, Event: printsvc.EventFailed,
+				ID: id, Code: errcode.CodeOf(e), Message: e.Error(), TS: time.Now().UnixMilli()})
 			continue
 		}
-		logger.Infof("MQTT id=%d 已提交 任务#%d(登记/更新=%v)", id, no, reg)
-		c.publish(cli, ackMsg{Type: "ack", Merchant: merchant, ID: id, OK: true, JobNo: no, Message: "已提交"})
+		logger.Infof("MQTT id=%d 已提交 任务#%d(登记/更新=%v)", id, res.JobNo, reg)
+		copies := req.PCopy
+		if copies <= 0 {
+			copies = 1
+		}
+		width := res.Printer.Width
+		if req.PWidth == 58 || req.PWidth == 80 {
+			width = req.PWidth
+		}
+		c.publish(cli, reportMsg{Type: "report", Merchant: merchant, Event: eventAccepted,
+			ID: id, JobNo: res.JobNo, Code: 0, Message: "已提交",
+			Printer: reportPrinterOf(&res.Printer),
+			Params: &reportParams{
+				Buzzer: *req.Buzzer, Cut: *req.Cut, Reprint: *req.Reprint,
+				HeadLines: *req.HeadLines, TailLines: *req.TailLines,
+				PWidth: width, PCopy: copies, ContentType: req.Type,
+			},
+			TS: time.Now().UnixMilli()})
 	}
 	if changed {
 		c.save()
-		c.fireChange()         // 有新增/更新打印机 → 保存并刷新列表 + 起监测
-		c.PublishPrinterList() // 列表/参数有变 → 上报最新全量列表
+		c.fireChange() // 有新增/更新打印机 → 保存并刷新列表 + 起监测(state 由定时拍带出)
 	}
 }
 
@@ -263,6 +315,18 @@ func reqTarget(r *api.PrintRequest) string {
 	return "(选中机/未指定)"
 }
 
+// sendOffline 直接经指定连接同步发布简版离线 state(短超时),供 Close/Reload 收尾:
+// 绕过 publish 的代际校验——收尾时 c.cli 已置换/置 nil,常规 publish 会拒发。
+func sendOffline(cli pmqtt.Client, merchant, topic string) {
+	if cli == nil || strings.TrimSpace(topic) == "" || !cli.IsConnectionOpen() {
+		return
+	}
+	b, _ := json.Marshal(stateMsg{Type: "state", Merchant: merchant, Online: false})
+	if tok := cli.Publish(topic, 1, false, b); !tok.WaitTimeout(3 * time.Second) {
+		logger.Errorf("MQTT 离线上报超时未确认: %s", b)
+	}
+}
+
 // publish 向配置的「上报主题」发布(best-effort:不排队不补发,失败原因落日志)。
 // 未连接/主题为空时跳过;若配置为启用状态,跳过与失败都 logger.Errorf 记原因,做到有据可查。
 //
@@ -271,12 +335,20 @@ func reqTarget(r *api.PrintRequest) string {
 // 只进内部存储、token 永不完成,且 CleanSession 连上后 persist.Reset() 直接丢弃——
 // 消息静默丢失、tok.Wait() goroutine 永久泄漏。判 IsConnectionOpen 把这类消息转为「跳过+日志」;
 // 判后瞬断的残余窗口由 WaitTimeout 兜底(超时记日志、goroutine 退出,不泄漏)。
+//
+// 代际校验:cli 不等于当前 c.cli(Reload 已换连接/Close 已关闭)时静默跳过——
+// 封死「Close 发完离线后,在途 PublishState 又经旧连接补发 online:true」的交错窗口。
 func (c *Client) publish(cli pmqtt.Client, v interface{}) {
 	c.mu.Lock()
 	topic := c.reportTopic
 	enabled := c.enabled
+	cur := c.cli
 	c.mu.Unlock()
 	b, _ := json.Marshal(v)
+	if cli != nil && cli != cur {
+		logger.Infof("MQTT 上报跳过(连接已更换或关闭): %s", b)
+		return
+	}
 	if cli == nil || topic == "" || !cli.IsConnectionOpen() {
 		if enabled {
 			logger.Errorf("MQTT 上报未发送(未连接或上报主题为空): %s", b)
@@ -306,7 +378,7 @@ func TestConnect(m model.MQTT) (time.Duration, error) {
 	}
 	opts := pmqtt.NewClientOptions()
 	opts.AddBroker(brokerURL(m.Broker, m.Port))
-	opts.SetClientID("cmp-" + merchant + "-test")
+	opts.SetClientID(merchant) // 与主连接同为短商户号;主连接在线时测试会短暂替换连接,主连接自动重连恢复
 	if m.Username != "" {
 		opts.SetUsername(m.Username)
 	}
@@ -344,16 +416,30 @@ func (c *Client) Status() (bool, string) {
 	}
 }
 
-// Close 优雅关闭:主动发离线并断开。
+// Active 返回当前是否存在连接对象(启用且参数齐全;不代表已连上)。
+// 供 UI 区分「断线」与「未启用/已停用」——Close/reconnect 置 cli=nil 时不触发 onStatus,
+// UI 须在每次状态回调里主动判别中性态。
+func (c *Client) Active() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cli != nil
+}
+
+// Close 优雅关闭:停定时上报、主动发离线并断开。
+// enabled 置 false:收尾期在途上报(任务终态等)静默跳过,不再刷错误日志。
 func (c *Client) Close() {
 	c.mu.Lock()
-	cli := c.cli
-	merchant := c.merchant
+	cli, merchant, topic := c.cli, c.merchant, c.reportTopic
 	c.cli = nil
 	c.connected = false
+	c.enabled = false
+	if c.stopTick != nil {
+		close(c.stopTick)
+		c.stopTick = nil
+	}
 	c.mu.Unlock()
 	if cli != nil {
-		c.publish(cli, statusMsg{Type: "status", Merchant: merchant, Event: "offline"})
+		sendOffline(cli, merchant, topic)
 		cli.Disconnect(250)
 	}
 }

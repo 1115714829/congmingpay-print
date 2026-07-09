@@ -32,6 +32,9 @@ func (a *App) setupTray(icon *walk.Icon) error {
 		}
 	})
 
+	// 点击系统通知(气泡/Toast)→ 显示主窗口
+	ni.MessageClicked().Attach(a.showMainWindow)
+
 	return ni.SetVisible(true)
 }
 

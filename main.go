@@ -13,16 +13,17 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
-	"strings"
 	"time"
 
 	"congmingpay/internal/config"
 	"congmingpay/internal/docserver"
+	"congmingpay/internal/instance"
 	"congmingpay/internal/logger"
-	"congmingpay/internal/model"
 	"congmingpay/internal/mqtt"
 	"congmingpay/internal/printsvc"
 	"congmingpay/internal/ui"
+
+	"github.com/lxn/walk"
 )
 
 func main() {
@@ -39,10 +40,26 @@ func main() {
 	}()
 	logger.Infof("=== congmingpay 启动 (日志: %s) ===", logPath)
 
+	// 单实例守卫(命名互斥体,跨会话):二次启动友好提示后退出,
+	// 不触碰配置/打印/MQTT/端口(避免与运行中实例互抢 MQTT ClientID 顶号、竞争损坏备份)。
+	lock, already, err := instance.Acquire()
+	if err != nil {
+		logger.Errorf("单实例互斥体创建失败(按唯一实例继续启动): %v", err)
+	}
+	if already {
+		logger.Info("程序已在运行,本次启动退出")
+		// 标题只读窥探配置里的服务名,与运行中实例的窗口标题/托盘提示一致
+		walk.MsgBox(nil, config.PeekServiceName(config.DefaultPath()),
+			"程序已在运行,无需重复打开。\r\n可通过屏幕右下角的系统托盘图标打开主窗口。",
+			walk.MsgBoxIconInformation|walk.MsgBoxSetForeground)
+		return
+	}
+	defer lock.Release()
+
 	cfgPath := config.DefaultPath()
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		// 配置损坏:先备份坏文件(打印机注册表可从备份手工恢复),再用默认配置继续启动——不再静默丢弃
+		// 配置损坏:备份坏文件(打印机登记信息可从备份手工恢复)并记录日志,以默认配置启动
 		bad := cfgPath + ".bad-" + time.Now().Format("20060102-150405")
 		if renameErr := os.Rename(cfgPath, bad); renameErr == nil {
 			logger.Errorf("加载配置失败(%s): %v;损坏文件已备份到 %s,改用默认配置", cfgPath, err, bad)
@@ -52,29 +69,9 @@ func main() {
 		cfg = config.Default()
 	}
 
-	// 自愈:修复旧配置里空/重复的打印机 ID(历史并发同纳秒撞号),并落盘
-	if cfg.HealPrinterIDs() {
-		logger.Info("检测到重复/空的打印机 ID,已重新分配唯一 ID 并保存")
-		if err := cfg.Save(cfgPath); err != nil {
-			logger.Errorf("保存修复后的配置失败: %v", err)
-		}
-	}
-	// 迁移:旧配置无 docServer 段(Port==0)→ 应用默认(启用、端口 8080),并落盘
-	if cfg.Settings.DocServer.Port == 0 {
-		cfg.Settings.DocServer = model.DefaultSettings().DocServer
-		if err := cfg.Save(cfgPath); err != nil {
-			logger.Errorf("保存默认接口文档服务配置失败: %v", err)
-		}
-	}
-	// 迁移:旧配置有短商户号但无上报主题 → 自动补「<净化后短商户号>/report」。
-	// 用 SanitizeMerchant 与旧版实际发布主题(merchant=SanitizeMerchant(Topic))完全一致,避免手改脏 Topic 时迁移出不同主题。
-	if m := mqtt.SanitizeMerchant(cfg.Settings.MQTT.Topic); m != "" && strings.TrimSpace(cfg.Settings.MQTT.ReportTopic) == "" {
-		cfg.Settings.MQTT.ReportTopic = m + "/report"
-		logger.Infof("旧配置无上报主题,已自动迁移为 %s(可在系统设置里修改)", cfg.Settings.MQTT.ReportTopic)
-		if err := cfg.Save(cfgPath); err != nil {
-			logger.Errorf("保存迁移后的上报主题失败: %v", err)
-		}
-	}
+	// 配置即当前标准形态,无迁移/自愈逻辑(结构变更时删除旧 config.json 重新配置)。
+	// 上报主题无默认值:服务端固定主题由用户在设置页手动填写;
+	// 为空时 mqtt.reconnect 只停不连并记日志,启用 MQTT 保存设置时强制必填。
 	// 打印机清单(含 ID)日志,便于排查
 	for _, p := range cfg.PrinterList() {
 		logger.Infof("已加载打印机: [id=%s] 名称『%s』品牌『%s』规格 %s 目标 %s", p.ID, p.Name, p.BrandLabel(), p.WidthLabel(), p.Target())
@@ -83,22 +80,27 @@ func main() {
 	svc := printsvc.New()
 	// 云端唯一通道:MQTT。UI 在 Run 里给它注册打印机列表刷新回调,并在设置保存时 Reload。
 	mc := mqtt.New(cfg, svc, cfgPath)
-	// 任务终态(成功/失败)→ 上报打印结果;本地任务(测试打印/样票,无云端 id)不上报。
-	svc.SetOnJobFinal(func(ev printsvc.JobFinalEvent) {
+	// 仅局域网、只读的在线接口文档服务(不参与数据通信)。UI 在设置保存时 Reload。
+	ds := docserver.New()
+	// NewApp 是纯构造(不碰 walk),先建以便任务事件回调并联系统通知。
+	app := ui.NewApp(cfg, cfgPath, svc, mc, ds)
+	// 任务事件(终态成功/失败、长期卡单)单回调槽在此组合两个消费者:
+	// ① 系统通知(失败/卡单;本地任务也通知;托盘未就绪时由 notify 内部静默丢弃);
+	// ② 上报 report——本地任务(测试打印/样票,无云端 id)不上报。
+	svc.SetOnJobEvent(func(ev printsvc.JobEvent) {
+		app.NotifyJobEvent(ev)
 		if ev.CloudID == nil {
 			return
 		}
-		mc.PublishJobResult(ev)
+		mc.PublishJobEvent(ev)
 	})
 	mc.Start()
 	defer mc.Close()
 
-	// 仅局域网、只读的在线接口文档服务(不参与数据通信)。UI 在设置保存时 Reload。
-	ds := docserver.New()
 	ds.Start(cfg.Settings.DocServer)
 	defer ds.Stop()
 
-	if err := ui.NewApp(cfg, cfgPath, svc, mc, ds).Run(); err != nil {
+	if err := app.Run(); err != nil {
 		logger.Errorf("启动界面失败: %v", err)
 		os.Exit(1)
 	}

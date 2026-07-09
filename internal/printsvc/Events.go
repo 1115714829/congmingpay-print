@@ -1,30 +1,63 @@
 package printsvc
 
-// JobFinalEvent 是打印任务到达终态(成功/失败)时的事件快照,供上层(main 装配 MQTT)上报打印结果。
-// 仅终态触发:JobDone → OK=true、JobFailed → OK=false;「等待重试」不触发(待其最终打成/失败再报)。
-type JobFinalEvent struct {
+import "congmingpay/internal/model"
+
+// 任务事件类型(供上层组装 report 上行消息的 event 字段)。
+const (
+	EventDone    = "done"    // 打印成功(终态,恰好一次)
+	EventFailed  = "failed"  // 打印失败(终态,恰好一次)
+	EventWaiting = "waiting" // 长期等待告警(非终态,每个被拒流至多一次)
+)
+
+// JobEvent 是打印任务事件快照,供上层(main 装配 MQTT)上报。
+// done/failed 由 setStatus 终态收口触发;waiting 由长期被拒告警触发。
+type JobEvent struct {
+	Event   string
+	Code    int           // 全局错误码:done=0;failed/waiting 见 internal/errcode
 	JobNo   int
-	CloudID *uint32 // 云端消息 id;nil=本地任务(测试打印/打印样票),由装配层决定是否过滤
-	Printer string  // 打印机名称
-	Target  string  // 打印目标(IP:port 或 USB『…』),供日志/排查
-	OK      bool    // true=打印成功(JobDone) false=打印失败(JobFailed)
-	Err     string  // 失败原因,成功为空
+	CloudID *uint32       // 云端消息 id;nil=本地任务(测试打印/打印样票),由装配层决定是否过滤
+	Printer model.Printer // 目标打印机快照(值拷贝,供回执携带身份)
+	Err     string        // 失败/等待原因,成功为空
 }
 
-// SetOnJobFinal 设置任务终态回调。回调可能在派发 goroutine 中被调用,
+// SetOnJobEvent 设置任务事件回调。回调可能在派发 goroutine 中被调用,
 // 契约:必须快速返回、不得阻塞(下游 MQTT 发布为非阻塞,满足)。
-func (s *Service) SetOnJobFinal(f func(JobFinalEvent)) {
+func (s *Service) SetOnJobEvent(f func(JobEvent)) {
 	s.mu.Lock()
-	s.onJobFinal = f
+	s.onJobEvent = f
 	s.mu.Unlock()
 }
 
-// fireJobFinal 触发终态回调(锁外调用,锁纪律同 fireNotify)。
-func (s *Service) fireJobFinal(ev JobFinalEvent) {
+// fireJobEvent 触发任务事件回调(锁外调用,锁纪律同 fireNotify)。
+func (s *Service) fireJobEvent(ev JobEvent) {
 	s.mu.Lock()
-	f := s.onJobFinal
+	f := s.onJobEvent
 	s.mu.Unlock()
 	if f != nil {
 		f(ev)
 	}
+}
+
+// OnlineInfo 是一台打印机的最近在线检测结果(共享注册表,供 state 上行消息合成)。
+type OnlineInfo struct {
+	Online bool
+	Detail string
+}
+
+// SetPrinterOnline 写入一台打印机的在线检测结果(UI 监测 goroutine 每次巡检调用)。
+func (s *Service) SetPrinterOnline(id string, online bool, detail string) {
+	s.onlineMu.Lock()
+	s.online[id] = OnlineInfo{Online: online, Detail: detail}
+	s.onlineMu.Unlock()
+}
+
+// OnlineSnapshot 返回全部打印机在线检测结果的拷贝(供 state 上行消息合成)。
+func (s *Service) OnlineSnapshot() map[string]OnlineInfo {
+	s.onlineMu.RLock()
+	defer s.onlineMu.RUnlock()
+	out := make(map[string]OnlineInfo, len(s.online))
+	for k, v := range s.online {
+		out[k] = v
+	}
+	return out
 }

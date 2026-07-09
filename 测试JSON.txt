@@ -14,8 +14,9 @@
 - 【必填五字段,缺一即被拒(无降级)】:
     "buzzer"(蜂鸣 0关1开)、"cut"(切刀 0关1开)、"reprint"(重打抬头 0普通/1带醒目「重打」抬头)、
     "headLines"(头部空行,0=默认)、"tailLines"(尾部空行,0=默认)。
-- 这五个字段 + printer 身份(name/brand/width)会【覆盖并持久化】到目标打印机(以云端为准,
-  属性页同步显示;本地手动改的会被下一条打印覆盖)。
+- 其中 buzzer/cut/headLines/tailLines 四个参数 + printer 身份(name/brand/width)会【覆盖并持久化】
+  到目标打印机(以云端为准,属性页同步显示;本地手动改的会被下一条打印覆盖)。
+  reprint 只对本单生效,不持久化。
 - 纸宽:"pWidth" 填 58 或 80,按你机器改(飞蛾/佳博通用)。
 - 多台:最外层是数组 [ ... ],每台一个 { }。并发打印;某台连不上只会自己
   进「等待重试」,不影响其它台。
@@ -30,7 +31,7 @@
 {
   "printer": {"name":"飞蛾1","ip":"192.168.68.194","brand":"飞蛾","width":80},
   "id": 6812801,
-  "type": 5,
+  "type": 0,
   "pWidth": 80,
   "pCopy": 1,
   "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
@@ -58,14 +59,13 @@
 ------------------------------------------------------------
 【段2】一次下发 5 条:飞蛾1/飞蛾2/飞蛾3/美团1 各一张 + 飞蛾1 再打一张「结账单」
        飞蛾1(194)出现两次 = 同一台连打两张(一菜一切 + 结账单);其余各一张
-       (曾少一个逗号 `}{` 导致 JSON 非法,已修;美团1 的重复 id 也已改唯一)
 ------------------------------------------------------------
 复制这段↓
 [
   {
     "printer": {"name":"飞蛾1","ip":"192.168.68.194","brand":"飞蛾","width":80},
     "id": 6812802,
-    "type": 5,
+    "type": 0,
     "pWidth": 80,
     "pCopy": 1,
     "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
@@ -86,7 +86,7 @@
   {
     "printer": {"name":"飞蛾2","ip":"192.168.68.168","brand":"飞蛾","width":80},
     "id": 6825202,
-    "type": 5,
+    "type": 0,
     "pWidth": 80,
     "pCopy": 1,
     "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
@@ -107,7 +107,7 @@
   {
     "printer": {"name":"飞蛾3","ip":"192.168.68.252","brand":"飞蛾","width":80},
     "id": 6828202,
-    "type": 5,
+    "type": 0,
     "pWidth": 80,
     "pCopy": 1,
     "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
@@ -128,7 +128,7 @@
   {
     "printer": {"name":"美团1","ip":"192.168.68.219","brand":"飞蛾","width":80},
     "id": 6828203,
-    "type": 5,
+    "type": 0,
     "pWidth": 80,
     "pCopy": 1,
     "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
@@ -149,7 +149,7 @@
   {
     "printer": {"name":"飞蛾1","ip":"192.168.68.194","brand":"飞蛾","width":80},
     "id": 1615411579,
-    "type": 5,
+    "type": 0,
     "pWidth": 80,
     "pCopy": 1,
     "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
@@ -187,7 +187,7 @@
 {
   "gateway": "192.168.68.194",
   "id": 6812858,
-  "type": 5,
+  "type": 0,
   "pWidth": 58,
   "pCopy": 1,
   "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
@@ -212,7 +212,7 @@
 {
   "gateway": "192.168.68.194",
   "id": 1615411579,
-  "type": 5,
+  "type": 0,
   "pWidth": 80,
   "pCopy": 1,
   "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
@@ -235,8 +235,7 @@
     {"size":"11","bold":true,"type":"text","align":"right","cont":"实付金额：0.02"},
     {"type":"text"},
     {"type":"text"},
-    {"type":"text"},
-    {"cont":"1","type":"cut"}
+    {"type":"text"}
   ]
 }
 ↑到这里
@@ -244,14 +243,15 @@
 
 ------------------------------------------------------------
 【段5】结账单(USB 打印,蜂鸣开 + 切刀开)
-       gateway:"usb" = 首台已添加的 USB 打印机;或改成 "printer":"USB打印机名"
+       USB 打印必须用 "printer":"打印机名" 指定(名字就是软件里/上报里那台机的名称);
+       gateway 只能填网口 IP,填 "usb" 会被拒绝
        (USB 需先在系统装好驱动、并在本软件里添加;USB 目标不自动新增)
 ------------------------------------------------------------
-复制这段↓
+复制这段↓(把 打印1 换成你的 USB 打印机名称)
 {
-  "gateway": "usb",
+  "printer": "打印1",
   "id": 1615411580,
-  "type": 5,
+  "type": 0,
   "pWidth": 80,
   "pCopy": 1,
   "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
@@ -274,8 +274,7 @@
     {"size":"11","bold":true,"type":"text","align":"right","cont":"实付金额：0.02"},
     {"type":"text"},
     {"type":"text"},
-    {"type":"text"},
-    {"cont":"1","type":"cut"}
+    {"type":"text"}
   ]
 }
 ↑到这里
@@ -291,7 +290,7 @@
   {
     "printer": {"name":"飞蛾1","ip":"192.168.68.194","brand":"飞蛾","width":80},
     "id": 1615411579,
-    "type": 5,
+    "type": 0,
     "pWidth": 80,
     "pCopy": 1,
     "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
@@ -320,7 +319,7 @@
   {
     "printer": {"name":"飞蛾1","ip":"192.168.68.194","brand":"飞蛾","width":80},
     "id": 1615411580,
-    "type": 5,
+    "type": 0,
     "pWidth": 80,
     "pCopy": 1,
     "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,

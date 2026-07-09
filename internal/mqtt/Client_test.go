@@ -51,6 +51,7 @@ func TestBrokerURL(t *testing.T) {
 // 依赖公共 broker(test.mosquitto.org);连不上则跳过(不算失败)。
 func TestRoundTrip(t *testing.T) {
 	merchant := "cmpselftest9271"
+	// ReportTopic 为测试专用唯一主题(公共 broker 防串扰);产品无默认上报主题,由用户手填。
 	m := model.MQTT{Enabled: true, Broker: "test.mosquitto.org", Port: 1883, Topic: merchant, ReportTopic: merchant + "/report"}
 
 	if _, err := TestConnect(m); err != nil {
@@ -91,7 +92,7 @@ func TestRoundTrip(t *testing.T) {
 		}
 	}).Wait()
 
-	printJSON := `{"gateway":"10.9.9.9","id":770001,"type":5,"pWidth":80,"pCopy":1,` +
+	printJSON := `{"gateway":"10.9.9.9","id":770001,"type":0,"pWidth":80,"pCopy":1,` +
 		`"buzzer":0,"cut":1,"reprint":0,"headLines":0,"tailLines":0,` +
 		`"contents":[{"cont":"MQTT自测","type":"title"}]}`
 	pub.Publish(merchant, 1, false, printJSON).Wait()
@@ -110,22 +111,54 @@ func TestRoundTrip(t *testing.T) {
 	}
 	t.Logf("已产生打印任务 %d 个", len(svc.Jobs()))
 
-	// 应收到回执(且携带 merchant 身份——服务端单主题一对多靠它分辨来源)
+	// 应收到受理回执 report(accepted),且携带 merchant 身份与 code=0
 	select {
-	case ack := <-gotAck:
-		var a ackMsg
-		_ = json.Unmarshal([]byte(ack), &a)
-		t.Logf("收到回执: %s (type=%s merchant=%s ok=%v job=%d)", ack, a.Type, a.Merchant, a.OK, a.JobNo)
-		if a.Type != "ack" {
-			t.Errorf("回执 type 应为 ack, got %q", a.Type)
+	case raw := <-gotAck:
+		var r struct {
+			Type     string
+			Merchant string
+			Event    string
+			ID       uint32
+			JobNo    int
+			Code     int
+			Message  string
 		}
-		if a.Merchant != merchant {
-			t.Errorf("回执应携带 merchant=%q, got %q", merchant, a.Merchant)
+		_ = json.Unmarshal([]byte(raw), &r)
+		t.Logf("收到上行: %s", raw)
+		if r.Type != "report" || r.Event != "accepted" {
+			t.Errorf("应收到 report/accepted, got %s/%s", r.Type, r.Event)
+		}
+		if r.Merchant != merchant || r.Code != 0 || r.ID != 770001 {
+			t.Errorf("merchant/code/id 不符: %s/%d/%d", r.Merchant, r.Code, r.ID)
 		}
 	case <-time.After(5 * time.Second):
-		t.Error("未在 5s 内收到打印回执")
+		t.Error("未在 5s 内收到受理回执")
 	}
-	_ = fmt.Sprint
+}
+
+// TestParseQuery 锁定下行查询消息的分流边界:仅「单对象 + 顶层 query 非空字符串」为查询。
+func TestParseQuery(t *testing.T) {
+	cases := []struct {
+		payload string
+		want    string
+		isQuery bool
+	}{
+		{`{"query":"printers"}`, "printers", true},
+		{`  {"query":"foo"} `, "foo", true},
+		{`{"query":"printers","buzzer":0}`, "printers", true}, // 含 query 即查询,其余字段忽略
+		{`{"query":""}`, "", false},                           // 空字符串不是查询
+		{`{"query":123}`, "", false},                          // 非字符串不是查询
+		{`{"query":null}`, "", false},
+		{`[{"query":"printers"}]`, "", false}, // 数组不做查询探测
+		{`{"buzzer":0}`, "", false},
+		{``, "", false},
+	}
+	for _, c := range cases {
+		q, ok := parseQuery([]byte(c.payload))
+		if q != c.want || ok != c.isQuery {
+			t.Errorf("parseQuery(%q) = (%q,%v), 期望 (%q,%v)", c.payload, q, ok, c.want, c.isQuery)
+		}
+	}
 }
 
 // 启用但缺上报主题 → 拒绝连接(与 broker/短商户号同级必要)。
@@ -139,14 +172,21 @@ func TestReconnectRequiresReportTopic(t *testing.T) {
 	}
 }
 
-// TestResultRoundTrip:端到端——本地假打印机 + 公共 broker,应先收 ack(已提交)再收 result(打印成功,id 回携)。
-// 依赖公共 broker;连不上则跳过。
-func TestResultRoundTrip(t *testing.T) {
+// TestReportRoundTrip:端到端——本地假打印机 + 公共 broker,应收到
+// report(accepted)、state(定时拍全量快照,含登记后的打印机)与 report(done);
+// 另验证 {"query":"printers"} 拉取与未知 query 的 1002 回执。依赖公共 broker;连不上则跳过。
+func TestReportRoundTrip(t *testing.T) {
 	merchant := "cmpselftest9272r"
+	// ReportTopic 为测试专用唯一主题(公共 broker 防串扰);产品无默认上报主题,由用户手填。
 	m := model.MQTT{Enabled: true, Broker: "test.mosquitto.org", Port: 1883, Topic: merchant, ReportTopic: merchant + "/report"}
 	if _, err := TestConnect(m); err != nil {
 		t.Skipf("公共 broker 不可达,跳过端到端: %v", err)
 	}
+
+	// 定时上报间隔临时调小:登记后的 state 由定时拍带出(产品固定 1 分钟)。
+	oldInterval := stateInterval
+	stateInterval = 2 * time.Second
+	t.Cleanup(func() { stateInterval = oldInterval })
 
 	// 本地假打印机:接收并丢弃打印字节。
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -169,12 +209,12 @@ func TestResultRoundTrip(t *testing.T) {
 	cfg := config.Default()
 	svc := printsvc.New()
 	c := New(cfg, svc, "")
-	// 等价 main.go 装配:任务终态 → 上报打印结果(本地任务过滤)。
-	svc.SetOnJobFinal(func(ev printsvc.JobFinalEvent) {
+	// 等价 main.go 装配:任务事件 → 上报 report(本地任务过滤)。
+	svc.SetOnJobEvent(func(ev printsvc.JobEvent) {
 		if ev.CloudID == nil {
 			return
 		}
-		c.PublishJobResult(ev)
+		c.PublishJobEvent(ev)
 	})
 	cfg.Settings.MQTT = m
 	c.Start()
@@ -205,53 +245,96 @@ func TestResultRoundTrip(t *testing.T) {
 		}
 	}).Wait()
 
-	printJSON := fmt.Sprintf(`{"gateway":"127.0.0.1:%d","id":880001,"type":5,"pWidth":80,"pCopy":1,`+
+	printJSON := fmt.Sprintf(`{"gateway":"127.0.0.1:%d","id":880001,"type":0,"pWidth":80,"pCopy":1,`+
 		`"buzzer":0,"cut":1,"reprint":0,"headLines":0,"tailLines":0,`+
 		`"contents":[{"cont":"结果回执自测","type":"title"}]}`, port)
 	pub.Publish(merchant, 1, false, printJSON).Wait()
 
-	// 应收到 ack(已提交)、printerList(自动登记触发)与 result(打印成功);全部携带 merchant 身份。
-	// 不校验三者先后顺序——ack 由 paho router goroutine 发、result 由 dispatch goroutine 发,
-	// 环回打印可 1ms 级完成,二者的 Publish 调用序无同步保证,只要都收到即可。
-	var sawAck, sawResult, sawList bool
+	// 应收到 report(accepted,含 printer+params)、state(含刚登记打印机)与 report(done);
+	// 全部携带 merchant 身份。不校验先后顺序——accepted 由 paho router goroutine 发、
+	// done 由 dispatch goroutine 发,环回打印可 1ms 级完成,Publish 调用序无同步保证。
+	var sawAccepted, sawDone, sawState bool
 	timeout := time.After(20 * time.Second)
-	for !(sawAck && sawResult && sawList) {
+	for !(sawAccepted && sawDone && sawState) {
 		select {
 		case raw := <-got:
 			var probe struct {
 				Type     string `json:"type"`
 				Merchant string `json:"merchant"`
+				Event    string `json:"event"`
 				ID       uint32 `json:"id"`
-				OK       bool   `json:"ok"`
 				JobNo    int    `json:"jobNo"`
+				Code     int    `json:"code"`
 				Printers []struct {
 					Printer string `json:"printer"`
 					Width   int    `json:"width"`
 				} `json:"printers"`
+				Params *struct {
+					Cut    int `json:"cut"`
+					PWidth int `json:"pWidth"`
+				} `json:"params"`
 			}
 			_ = json.Unmarshal([]byte(raw), &probe)
 			t.Logf("收到上行: %s", raw)
 			if probe.Merchant != merchant {
 				t.Errorf("上行消息应携带 merchant=%q,got %q(%s)", merchant, probe.Merchant, raw)
 			}
-			switch probe.Type {
-			case "ack":
-				if probe.ID == 880001 && probe.OK {
-					sawAck = true
+			switch {
+			case probe.Type == "report" && probe.Event == "accepted":
+				if probe.ID != 880001 || probe.Code != 0 || probe.JobNo == 0 {
+					t.Errorf("accepted 内容不符: %s", raw)
 				}
-			case "printerList":
-				if len(probe.Printers) == 0 || probe.Printers[0].Width != 80 {
-					t.Errorf("printerList 应含刚登记的 80mm 打印机: %s", raw)
+				if probe.Params == nil || probe.Params.Cut != 1 || probe.Params.PWidth != 80 {
+					t.Errorf("accepted 应携带本单参数: %s", raw)
 				}
-				sawList = true
-			case "result":
-				if probe.ID != 880001 || !probe.OK || probe.JobNo == 0 {
-					t.Errorf("result 内容不符: %s", raw)
+				sawAccepted = true
+			case probe.Type == "report" && probe.Event == "done":
+				if probe.ID != 880001 || probe.Code != 0 || probe.JobNo == 0 {
+					t.Errorf("done 内容不符: %s", raw)
 				}
-				sawResult = true
+				sawDone = true
+			case probe.Type == "state":
+				// 登记前的定时拍是空列表,跳过;登记后的拍应含 80mm 机。
+				if len(probe.Printers) == 0 {
+					break
+				}
+				if probe.Printers[0].Width != 80 {
+					t.Errorf("state 应含刚登记的 80mm 打印机: %s", raw)
+				}
+				sawState = true
 			}
 		case <-timeout:
-			t.Fatalf("20s 内未收齐 ack+result+printerList(sawAck=%v sawResult=%v sawList=%v)", sawAck, sawResult, sawList)
+			t.Fatalf("20s 内未收齐 accepted+done+state(accepted=%v done=%v state=%v)", sawAccepted, sawDone, sawState)
+		}
+	}
+
+	// 按需拉取:{"query":"printers"} → 收到全量 state;未知 query → report(failed, code=1002)。
+	pub.Publish(merchant, 1, false, `{"query":"printers"}`).Wait()
+	pub.Publish(merchant, 1, false, `{"query":"foo"}`).Wait()
+	var sawQueryState, saw1002 bool
+	qTimeout := time.After(10 * time.Second)
+	for !(sawQueryState && saw1002) {
+		select {
+		case raw := <-got:
+			var probe struct {
+				Type  string `json:"type"`
+				Event string `json:"event"`
+				ID    uint32 `json:"id"`
+				Code  int    `json:"code"`
+			}
+			_ = json.Unmarshal([]byte(raw), &probe)
+			t.Logf("收到上行: %s", raw)
+			switch {
+			case probe.Type == "state":
+				sawQueryState = true
+			case probe.Type == "report" && probe.Event == "failed" && probe.Code == 1002:
+				if probe.ID != 0 {
+					t.Errorf("查询回执 id 应为 0: %s", raw)
+				}
+				saw1002 = true
+			}
+		case <-qTimeout:
+			t.Fatalf("10s 内未收齐查询响应(state=%v code1002=%v)", sawQueryState, saw1002)
 		}
 	}
 }

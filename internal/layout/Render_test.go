@@ -56,6 +56,7 @@ func testPNG(t *testing.T) (string, []byte) {
 
 func TestRejectUnknownType(t *testing.T) {
 	mustErr(t, `[{"type":"foo","cont":"x"}]`, `未知元素 type "foo"`)
+	mustErr(t, `[{"cont":"1","type":"cut"}]`, `未知元素 type "cut"`) // cut 不是排版元素,切纸由顶层 cut 字段控制
 }
 
 func TestRejectTbodyWithoutThead(t *testing.T) {
@@ -167,7 +168,6 @@ func TestOKDefaults(t *testing.T) {
 	mustOK(t, `[{"cont":"x","align":"center","size":"11","bold":true}]`, 80)      // 全合法属性
 	mustOK(t, `[{"type":"div_line"},{"type":"div_star","cont":"标题"}]`, 80)      // 分割线
 	mustOK(t, `[{"both_sides":["收款金额","258.00"]}]`, 80)                       // 恰 2 段
-	mustOK(t, `[{"cont":"1","type":"cut"}]`, 80)                                  // cut 元素跳过
 	mustOK(t, `[{"type":"bc128","cont":"123456789"}]`, 80)                        // 条码缺 size = 默认
 	mustOK(t, `[{"type":"code39","cont":"123456789","hri":2,"size":"22"}]`, 80)   // 合法条码
 	mustOK(t, `[{"type":"qrcode","cont":"http://x"}]`, 80)                        // 单码
@@ -234,8 +234,7 @@ const fixtureBill = `[
   {"type":"div_line"},
   {"size":"00","bold":true,"type":"text","align":"right","cont":"应付金额:0.02"},
   {"size":"11","bold":true,"type":"text","align":"right","cont":"实付金额:0.02"},
-  {"type":"text"},
-  {"cont":"1","type":"cut"}
+  {"type":"text"}
 ]`
 
 const fixture58 = `[

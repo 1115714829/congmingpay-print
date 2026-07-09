@@ -1,4 +1,4 @@
-// Package layout 把云端 JSON 小票排版(MQTT type=5 的 contents 数组)渲染为 ESC/POS 字节。
+// Package layout 把云端 JSON 小票排版(MQTT type=0 的 contents 数组)渲染为 ESC/POS 字节。
 //
 // 渲染为「全部严格」模式:字段缺失用文档声明的默认(合法);字段存在但非法 → 整单拒绝,
 // Render 返回带 contents[i] 定位的 error(调用方回执 ok:false 并落日志)。

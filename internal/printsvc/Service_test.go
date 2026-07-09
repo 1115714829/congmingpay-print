@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"congmingpay/internal/errcode"
 	"congmingpay/internal/model"
 )
 
@@ -130,8 +131,9 @@ func TestRetryWhileWaitingNoDuplicatePrint(t *testing.T) {
 	}
 }
 
-// 终态事件:打印成功应触发 OnJobFinal(OK=true、CloudID 回携);本地任务(无 CloudID)事件照发、CloudID 为 nil。
-func TestJobFinalEventOnDone(t *testing.T) {
+// 终态事件:打印成功应触发 OnJobEvent(done、code=0、CloudID 回携、Printer 快照);
+// 本地任务(无 CloudID)事件照发、CloudID 为 nil。
+func TestJobEventOnDone(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Skipf("无法起本地监听: %v", err)
@@ -150,15 +152,15 @@ func TestJobFinalEventOnDone(t *testing.T) {
 	port := l.Addr().(*net.TCPAddr).Port
 
 	svc := New()
-	events := make(chan JobFinalEvent, 4)
-	svc.SetOnJobFinal(func(ev JobFinalEvent) { events <- ev })
+	events := make(chan JobEvent, 4)
+	svc.SetOnJobEvent(func(ev JobEvent) { events <- ev })
 
 	p := &model.Printer{ID: "e1", Name: "e1", Conn: model.ConnNetwork, IP: "127.0.0.1", Port: fmt.Sprintf("%d", port), Width: 80}
 	id := uint32(880001)
 	noCloud := svc.Submit(p, "cloud", []byte("x"), &Options{CloudID: &id})
 	noLocal := svc.Submit(p, "local", []byte("y"), nil)
 
-	got := map[int]JobFinalEvent{}
+	got := map[int]JobEvent{}
 	deadline := time.After(8 * time.Second)
 	for len(got) < 2 {
 		select {
@@ -169,26 +171,29 @@ func TestJobFinalEventOnDone(t *testing.T) {
 		}
 	}
 	ev := got[noCloud]
-	if !ev.OK {
-		t.Errorf("云端任务应 OK=true,got %+v", ev)
+	if ev.Event != EventDone || ev.Code != 0 {
+		t.Errorf("云端任务应 done/code=0,got %+v", ev)
 	}
 	if ev.CloudID == nil || *ev.CloudID != id {
 		t.Errorf("终态事件应回携 CloudID=%d,got %+v", id, ev.CloudID)
 	}
+	if ev.Printer.ID != "e1" {
+		t.Errorf("终态事件应携带打印机快照,got %+v", ev.Printer)
+	}
 	evL := got[noLocal]
-	if !evL.OK {
-		t.Errorf("本地任务应 OK=true,got %+v", evL)
+	if evL.Event != EventDone {
+		t.Errorf("本地任务应 done,got %+v", evL)
 	}
 	if evL.CloudID != nil {
 		t.Errorf("本地任务 CloudID 应为 nil,got %d", *evL.CloudID)
 	}
 }
 
-// 等待重试(拒连)不触发终态事件——只有成功/失败终态才上报。
-func TestNoFinalEventWhileWaiting(t *testing.T) {
+// 等待重试(拒连)在告警阈值前不触发任何事件——终态与 20s 卡单告警之外无上报。
+func TestNoEventWhileWaiting(t *testing.T) {
 	svc := New()
-	events := make(chan JobFinalEvent, 1)
-	svc.SetOnJobFinal(func(ev JobFinalEvent) { events <- ev })
+	events := make(chan JobEvent, 1)
+	svc.SetOnJobEvent(func(ev JobEvent) { events <- ev })
 	p := &model.Printer{ID: "e2", Name: "e2", Conn: model.ConnNetwork, IP: "127.0.0.1", Port: "1", Width: 80}
 	no := svc.Submit(p, "test", []byte("x"), nil)
 	if !waitFor(t, func() bool { return jobStatus(svc, no) == model.JobWaiting }, 3*time.Second) {
@@ -196,8 +201,35 @@ func TestNoFinalEventWhileWaiting(t *testing.T) {
 	}
 	select {
 	case ev := <-events:
-		t.Fatalf("等待重试不应触发终态事件: %+v", ev)
+		t.Fatalf("告警阈值前不应触发事件: %+v", ev)
 	case <-time.After(2 * time.Second):
+	}
+	svc.Cancel(no)
+}
+
+// 持续被拒超阈值 → 触发一次 waiting 事件(code=LongWaiting)。阈值经包级变量临时调小。
+func TestWaitingEventOnLongRefused(t *testing.T) {
+	old := longWaitWarn
+	longWaitWarn = 300 * time.Millisecond
+	t.Cleanup(func() { longWaitWarn = old })
+
+	svc := New()
+	events := make(chan JobEvent, 4)
+	svc.SetOnJobEvent(func(ev JobEvent) { events <- ev })
+	id := uint32(990001)
+	p := &model.Printer{ID: "w1", Name: "w1", Conn: model.ConnNetwork, IP: "127.0.0.1", Port: "1", Width: 80}
+	no := svc.Submit(p, "test", []byte("x"), &Options{CloudID: &id})
+
+	select {
+	case ev := <-events:
+		if ev.Event != EventWaiting {
+			t.Fatalf("被拒任务应先收到 waiting 事件,got %+v", ev)
+		}
+		if ev.Code != errcode.LongWaiting || ev.JobNo != no || ev.CloudID == nil || *ev.CloudID != id {
+			t.Fatalf("waiting 事件内容不符: %+v", ev)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("8s 内未收到 waiting 事件")
 	}
 	svc.Cancel(no)
 }

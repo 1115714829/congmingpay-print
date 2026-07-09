@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"congmingpay/internal/errcode"
 	"congmingpay/internal/escpos"
 )
 
 // Render 把 JSON 小票排版数组渲染为 ESC/POS 字节。widthMM 为纸宽(58/80)。
-// 全部严格:任一元素非法即整单拒绝,error 带 contents[i](种类) 定位,不产出部分字节。
+// 全部严格:任一元素非法即整单拒绝,error 带 contents[i](种类) 定位与全局错误码,不产出部分字节。
 func Render(contents []byte, widthMM int) ([]byte, error) {
 	var elems []Element
 	if err := json.Unmarshal(contents, &elems); err != nil {
-		return nil, err
+		return nil, errcode.Wrap(errcode.RenderNotArray, err)
 	}
 	r := &renderer{
 		b:     escpos.NewBuilder(),
@@ -22,10 +23,14 @@ func Render(contents []byte, widthMM int) ([]byte, error) {
 	}
 	for i := range elems {
 		if err := r.element(&elems[i]); err != nil {
-			return nil, fmt.Errorf("contents[%d](%s): %v", i, kindOf(&elems[i]), err)
+			return nil, errcode.Wrap(errcode.RenderInvalid, fmt.Errorf("contents[%d](%s): %v", i, kindOf(&elems[i]), err))
 		}
 	}
-	return r.b.Bytes()
+	data, err := r.b.Bytes()
+	if err != nil {
+		return nil, errcode.Wrap(errcode.EncodeFailed, err) // GB18030 编码失败(无元素定位)
+	}
+	return data, nil
 }
 
 type renderer struct {
@@ -61,10 +66,8 @@ func (r *renderer) element(e *Element) error {
 		return r.barcode(e, "39")
 	case "png":
 		return r.png(e)
-	case "cut":
-		return nil // 收尾切纸由 printsvc 按打印机「切刀」设置统一执行,文档声明此元素被忽略
 	default:
-		return fmt.Errorf("未知元素 type %q(支持 text/title/div_line/div_star/qrcode/bc128/code39/png/cut)", e.Type)
+		return fmt.Errorf("未知元素 type %q(支持 text/title/div_line/div_star/qrcode/bc128/code39/png)", e.Type)
 	}
 }
 

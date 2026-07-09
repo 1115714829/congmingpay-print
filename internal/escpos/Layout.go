@@ -11,8 +11,7 @@ func CharsPerLine(widthMM int) int {
 	return 48
 }
 
-// BaseTailLinesFor 返回该纸宽尾部空行的内置基数(不显示在界面):
-// 58mm=5;80mm=3(保持历史默认)。
+// BaseTailLinesFor 返回该纸宽尾部空行的标准基数(不显示在界面):58mm=5;80mm=3。
 func BaseTailLinesFor(widthMM int) int {
 	if widthMM == 58 {
 		return 5

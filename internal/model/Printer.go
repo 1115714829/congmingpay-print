@@ -59,7 +59,7 @@ type Printer struct {
 	LastPrint     string `json:"lastPrint"`
 }
 
-// Cuts 返回是否在打印末尾切纸(反向字段保证旧配置默认切纸)。
+// Cuts 返回是否在打印末尾切纸(反向字段:零值即启用切刀,缺省切纸)。
 func (p *Printer) Cuts() bool { return !p.CutDisabled }
 
 // BrandLabel 返回品牌展示文本,空值回退「其他」。

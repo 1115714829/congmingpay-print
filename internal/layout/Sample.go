@@ -1,7 +1,7 @@
 package layout
 
 // SampleContents 是覆盖各元素的示例小票排版(基于云端 JSON 排版结构),供「打印样票」验证。
-// 结构与 MQTT type=5 的 contents 一致;png 用内嵌 data URI(120x40 边框+对角线测试图)——
+// 结构与 MQTT type=0 的 contents 一致;png 用内嵌 data URI(120x40 边框+对角线测试图)——
 // 严格模式下外网 URL 不可达会整单拒印,故样票不依赖网络。
 var SampleContents = []byte(`[
   {"cont":"聪明付 排版样票","type":"title"},

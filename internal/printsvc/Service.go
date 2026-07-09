@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"congmingpay/internal/errcode"
 	"congmingpay/internal/escpos"
 	"congmingpay/internal/logger"
 	"congmingpay/internal/model"
@@ -21,8 +22,11 @@ const (
 	occBackoffCap   = 3 * time.Second  // 占用短退避上限
 	offBackoffStart = 5 * time.Second  // 离线退避起点
 	offBackoffCap   = 30 * time.Second // 离线退避上限
-	longWaitWarn    = 20 * time.Second // 连续被拒超此时长 → 任务行/日志可见告警(疑似端口未就绪/故障),但不自动失败
 )
+
+// longWaitWarn:连续被拒超此时长 → 任务行/日志可见告警 + 上报 waiting 事件(每个被拒流一次),但不自动失败。
+// 变量而非常量:仅供测试临时调小以验证告警路径。
+var longWaitWarn = 20 * time.Second
 
 // Options 是打印任务的可选覆盖参数(nil 字段=用打印机默认)。
 type Options struct {
@@ -64,7 +68,11 @@ type Service struct {
 	entries    []*entry
 	nextNo     int
 	notify     func()
-	onJobFinal func(JobFinalEvent) // 任务终态(成功/失败)回调,见 Events.go
+	onJobEvent func(JobEvent) // 任务事件(终态/卡单)回调,见 Events.go
+
+	// 打印机在线检测结果注册表(UI 监测写、MQTT state 上行读),见 Events.go
+	onlineMu sync.RWMutex
+	online   map[string]OnlineInfo
 
 	// 每台打印机一把打印串行锁(printerID → *sync.Mutex):本进程对同一台同时只开一个 9100 连接,
 	// pCopy 多份/并发任务串行打印,彼此不自撞 RST;不同打印机仍并行。仅在真打(transport.Print)那步持锁。
@@ -79,7 +87,7 @@ func (s *Service) printerLock(id string) *sync.Mutex {
 
 // New 创建打印服务。
 func New() *Service {
-	return &Service{nextNo: 1000}
+	return &Service{nextNo: 1000, online: map[string]OnlineInfo{}}
 }
 
 // SetNotify 设置任务变化回调(UI 用它刷新界面)。
@@ -227,7 +235,7 @@ func (s *Service) dispatch(e *entry) {
 			lock.Unlock()
 			return
 		}
-		s.setStatus(e, model.JobPrinting, "")
+		s.setStatus(e, model.JobPrinting, "", 0)
 		logger.Infof("任务 #%d 开始发送(%s %s)", e.job.No, e.printer.Name, e.printer.Target())
 		t0 := time.Now()
 		err := transport.Print(printerFor(&e.printer), payload)
@@ -244,18 +252,18 @@ func (s *Service) dispatch(e *entry) {
 		// 失败 = 驱动/打印机名/配置类错误,重试无益 → 失败。
 		if e.printer.Conn == model.ConnUSB {
 			if err == nil {
-				s.setStatus(e, model.JobDone, "")
+				s.setStatus(e, model.JobDone, "", 0)
 				logger.Infof("任务 #%d%s 已交打印后台(USB『%s』,耗时 %dms)", e.job.No, tag, e.printer.USBName, took.Milliseconds())
 				return
 			}
-			s.setStatus(e, model.JobFailed, err.Error())
+			s.setStatus(e, model.JobFailed, err.Error(), errcode.USBSubmitFailed)
 			logger.Errorf("任务 #%d USB 打印失败(『%s』): %v", e.job.No, e.printer.USBName, err)
 			return
 		}
 
 		// 以下仅网口:真打为最终裁决,按错误分类。
 		if err == nil {
-			s.setStatus(e, model.JobDone, "")
+			s.setStatus(e, model.JobDone, "", 0)
 			logger.Infof("任务 #%d%s 已发送到 %s %s(耗时 %dms)", e.job.No, tag, e.printer.Name, e.printer.Target(), took.Milliseconds())
 			return
 		}
@@ -274,7 +282,7 @@ func (s *Service) dispatch(e *entry) {
 			continue
 		}
 		// ③ 已连上但写失败/渲染类 → 直接失败,不自动重试(避免重复出纸)。
-		s.setStatus(e, model.JobFailed, err.Error())
+		s.setStatus(e, model.JobFailed, err.Error(), errcode.NetWriteFailed)
 		logger.Errorf("任务 #%d 打印失败(%s %s): %v", e.job.No, e.printer.Name, e.printer.Target(), err)
 		return
 	}
@@ -320,12 +328,20 @@ func (s *Service) waitAndContinue(e *entry, myGen int, occupancy bool, cause err
 	}
 	s.mu.Unlock()
 
-	s.setStatus(e, model.JobWaiting, detail)
+	s.setStatus(e, model.JobWaiting, detail, 0)
 	reason := "离线"
 	if occupancy {
 		reason = "打印口被占/未就绪"
 	}
 	if warnNow {
+		// 长期被拒告警(每个被拒流一次):落日志 + 上报 waiting 事件(code=LongWaiting)。
+		s.mu.Lock()
+		ev := JobEvent{
+			Event: EventWaiting, Code: errcode.LongWaiting, JobNo: e.job.No,
+			CloudID: e.cloudID, Printer: e.printer, Err: detail,
+		}
+		s.mu.Unlock()
+		s.fireJobEvent(ev)
 		logger.Errorf("任务 #%d 长期等待·疑似端口未就绪/故障(%s %s): %v", e.job.No, e.printer.Name, e.printer.Target(), cause)
 	} else {
 		logger.Infof("任务 #%d %s,最多 %.0fs 后重试或联通/释放即打(%s): %v", e.job.No, reason, wait.Seconds(), e.printer.Target(), cause)
@@ -431,23 +447,27 @@ func (s *Service) NudgeOnline(printerID string) {
 	}
 }
 
-func (s *Service) setStatus(e *entry, st model.JobStatus, errMsg string) {
+// setStatus 更新任务状态;code 为全局错误码(成功/非终态传 0,失败传 errcode 值)。
+// 终态(成功/失败)→ 锁内做事件快照,锁外触发上报回调。四个终态出口全经此收口,各恰好一次。
+func (s *Service) setStatus(e *entry, st model.JobStatus, errMsg string, code int) {
 	s.mu.Lock()
 	e.job.Status = st
 	e.job.Err = errMsg
-	// 终态(成功/失败)→ 锁内做事件快照,锁外触发上报回调。四个终态出口全经此收口,各恰好一次。
-	var ev *JobFinalEvent
+	var ev *JobEvent
 	if st == model.JobDone || st == model.JobFailed {
-		ev = &JobFinalEvent{
-			JobNo: e.job.No, CloudID: e.cloudID,
-			Printer: e.printer.Name, Target: e.printer.Target(),
-			OK: st == model.JobDone, Err: errMsg,
+		event := EventDone
+		if st == model.JobFailed {
+			event = EventFailed
+		}
+		ev = &JobEvent{
+			Event: event, Code: code, JobNo: e.job.No, CloudID: e.cloudID,
+			Printer: e.printer, Err: errMsg,
 		}
 	}
 	s.mu.Unlock()
 	s.fireNotify()
 	if ev != nil {
-		s.fireJobFinal(*ev)
+		s.fireJobEvent(*ev)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,8 +18,7 @@ import (
 var printerIDSeq uint64
 
 // NewPrinterID 生成全局唯一的打印机 ID:时间戳 + 原子递增序号。
-// 【勿再用裸 time.Now().UnixNano()】——Windows 时钟精度粗(~100ns),两次相邻调用会撞出同一值,
-// 曾导致数组一次登记多台时两台共用 ID、状态互相绑定的 bug。
+// 原子序号保证并发/同纳秒调用也互不重复(Windows 时钟精度约 100ns,裸 UnixNano 不满足唯一性)。
 func NewPrinterID() string {
 	return fmt.Sprintf("p%d-%d", time.Now().UnixNano(), atomic.AddUint64(&printerIDSeq, 1))
 }
@@ -43,6 +43,29 @@ func DefaultPath() string {
 		return "config.json"
 	}
 	return filepath.Join(filepath.Dir(exe), "config.json")
+}
+
+// PeekServiceName 只读窥探配置中的服务名(供二次启动提示弹窗取标题,与运行中
+// 实例的窗口标题/托盘提示一致)。任何失败(不存在/损坏/为空)一律回退默认服务名;
+// 不备份、不改写、零副作用——此刻另一实例正在运行,损坏处理归其正常启动路径。
+func PeekServiceName(path string) string {
+	def := model.DefaultSettings().ServiceName
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return def
+	}
+	var c struct {
+		Settings struct {
+			ServiceName string `json:"serviceName"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(data, &c); err != nil {
+		return def
+	}
+	if name := strings.TrimSpace(c.Settings.ServiceName); name != "" {
+		return name
+	}
+	return def
 }
 
 // Load 从 path 读取配置;文件不存在时返回默认配置。
@@ -70,21 +93,6 @@ func (c *Config) Save(path string) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// HealPrinterIDs 修复空/重复的打印机 ID(旧配置可能因并发同纳秒撞号),给冲突项重分配唯一 ID。
-// 返回是否有改动(调用方据此决定要不要落盘)。启动加载后调用,单线程,不加锁。
-func (c *Config) HealPrinterIDs() bool {
-	seen := make(map[string]bool, len(c.Printers))
-	changed := false
-	for _, p := range c.Printers {
-		if p.ID == "" || seen[p.ID] {
-			p.ID = NewPrinterID()
-			changed = true
-		}
-		seen[p.ID] = true
-	}
-	return changed
-}
-
 // AddPrinter 追加一台打印机(加写锁)。
 func (c *Config) AddPrinter(p *model.Printer) {
 	c.mu.Lock()
@@ -93,32 +101,24 @@ func (c *Config) AddPrinter(p *model.Printer) {
 }
 
 // UpsertPrinter 按身份增量插入或更新一台打印机(云端下发同步用,替代手动创建)。
-// 身份:网口按 IP 匹配、USB 按 USBName 匹配。命中则只更新展示字段(名称/品牌/规格/端口),
+// 身份:网口按 IP 匹配(调用方仅传网口机;USB 机不走云端登记)。命中则只更新展示字段(名称/品牌/规格/端口),
 // 保留本地个性化设置(蜂鸣/切刀/重打/首尾行);未命中则补全默认并追加。
 // 返回落库后的打印机与是否为新增(加写锁)。
 func (c *Config) UpsertPrinter(in *model.Printer) (*model.Printer, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, p := range c.Printers {
-		hit := false
-		if in.Conn == model.ConnUSB {
-			hit = p.Conn == model.ConnUSB && in.USBName != "" && p.USBName == in.USBName
-		} else {
-			hit = p.Conn == model.ConnNetwork && in.IP != "" && p.IP == in.IP
-		}
-		if hit {
+		if p.Conn == model.ConnNetwork && in.IP != "" && p.IP == in.IP {
 			applyPrinterUpdate(p, in)
 			return p, false
 		}
 	}
+	// 调用方契约:in.Width 须为 58/80(api.resolveTarget 已强校验,双缺即拒,不在此兜底默认)。
 	if in.ID == "" {
 		in.ID = NewPrinterID()
 	}
 	if in.Brand == "" {
 		in.Brand = model.BrandOther
-	}
-	if in.Width != 58 && in.Width != 80 {
-		in.Width = 80
 	}
 	if in.Conn == model.ConnNetwork && in.Port == "" {
 		in.Port = "9100"

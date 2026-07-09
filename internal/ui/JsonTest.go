@@ -45,7 +45,7 @@ func (a *App) onJSONTest() {
 							if reqs[i].Printer.Empty() && reqs[i].Gateway == "" && sel != nil {
 								reqs[i].Printer = api.PrinterRef{Name: sel.Name}
 							}
-							no, reg, e := api.Process(a.cfg, a.svc, &reqs[i])
+							res, reg, e := api.Process(a.cfg, a.svc, &reqs[i])
 							if reg {
 								registered = true
 							}
@@ -56,7 +56,7 @@ func (a *App) onJSONTest() {
 							}
 							ok++
 							if firstNo == 0 {
-								firstNo = no
+								firstNo = res.JobNo
 							}
 						}
 						// 有目标随打印自动登记 → 持久化、刷新列表并为新机起监测(已在 UI 线程)
@@ -64,7 +64,6 @@ func (a *App) onJSONTest() {
 							a.save()
 							a.refreshPrinters()
 							a.syncMonitors()
-							a.publishPrinterList() // 列表/参数有变 → 上报全量列表
 						}
 						if ok == 0 {
 							a.warn("JSON 打印测试", lastErr)
@@ -84,7 +83,7 @@ func (a *App) onJSONTest() {
 	}).Run(a.mw)
 }
 
-// jsonTestSample 返回「JSON测试」默认模板:云端真实 MQTT 小票(type=5)。
+// jsonTestSample 返回「JSON测试」默认模板:云端真实 MQTT 小票(type=0)。
 // 目标 printer 用带身份的对象:选中网口机→带其 name/ip/brand/width;选中 USB 机→用名字;
 // 没选中→用「飞蛾1」示例(演示未注册自动新增)。pWidth 跟随纸宽,id/pCopy 保留 MQTT 结构。
 func jsonTestSample(sel *model.Printer) string {
@@ -105,7 +104,7 @@ func jsonTestSample(sel *model.Printer) string {
 	return `{
   ` + target + `,
   "id": 1295873547,
-  "type": 5,
+  "type": 0,
   "pWidth": ` + strconv.Itoa(width) + `,
   "pCopy": 1,
   "buzzer": 0, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,

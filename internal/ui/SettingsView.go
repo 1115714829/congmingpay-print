@@ -27,6 +27,8 @@ func (a *App) settingsPageWidget() Composite {
 				Children: []Widget{
 					Label{Text: "服务名称:"},
 					LineEdit{AssignTo: &a.setName, Text: s.ServiceName},
+					Label{Text: "系统通知:"},
+					CheckBox{AssignTo: &a.notifyEnabled, Text: "启用 Windows 系统通知(打印失败/卡单/打印机离线恢复/云端断线恢复)", Checked: !s.NotifyDisabled},
 				},
 			},
 			GroupBox{
@@ -161,6 +163,7 @@ func (a *App) onSaveSettings() {
 
 	s := &a.cfg.Settings
 	s.ServiceName = strings.TrimSpace(a.setName.Text())
+	s.NotifyDisabled = !a.notifyEnabled.Checked()
 	s.MQTT.Enabled = a.mqttEnabled.Checked()
 	s.MQTT.Broker = strings.TrimSpace(a.mqttBroker.Text())
 	s.MQTT.Port = atoiOr(a.mqttPort.Text(), s.MQTT.Port)

@@ -19,9 +19,10 @@ type DocServer struct {
 
 // Settings 是打印服务的全局设置。
 type Settings struct {
-	ServiceName string    `json:"serviceName"`
-	MQTT        MQTT      `json:"mqtt"`
-	DocServer   DocServer `json:"docServer"`
+	ServiceName    string    `json:"serviceName"`
+	NotifyDisabled bool      `json:"notifyDisabled"` // 关闭 Windows 系统通知;反向字段,零值=启用
+	MQTT           MQTT      `json:"mqtt"`
+	DocServer      DocServer `json:"docServer"`
 }
 
 // DefaultSettings 返回默认设置。

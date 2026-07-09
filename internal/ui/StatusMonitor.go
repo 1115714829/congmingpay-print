@@ -1,12 +1,21 @@
 package ui
 
 import (
+	"fmt"
 	"time"
 
 	"congmingpay/internal/logger"
 	"congmingpay/internal/model"
 	"congmingpay/internal/printsvc"
 )
+
+// b2i 把在线布尔折算为 lastOnline 三态里的 0/1。
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
 
 // pingInterval 是每台打印机后台持续检测的间隔(等价 ping -t 的 1 次/秒)。
 const pingInterval = 1 * time.Second
@@ -19,7 +28,7 @@ type monitorHandle struct {
 
 // monSig 返回打印机的监测签名(连接身份 + 名称)。
 // 含 Name:改名后签名变化 → syncMonitors 停旧起新,让监测 goroutine 的 snap 拿到新名称,
-// 否则后续在线/离线上报(PublishPrinterStatus 用 snap.Name)会携带旧名,与 printerList 的新名不一致。
+// 否则在线注册表写入(SetPrinterOnline 用 snap 身份)与日志会携带旧名,与 state 快照的新名不一致。
 func monSig(p *model.Printer) string {
 	return string(p.Conn) + "|" + p.IP + "|" + p.Port + "|" + p.USBName + "|" + p.Name
 }
@@ -66,15 +75,15 @@ func (a *App) stopAllMonitors() {
 
 // monitorLoop 每台一条:后台不间断检测(网口 ICMP ping、USB winspool),约 1 次/秒。
 // 不做防抖——超时即离线、通即在线;仅状态标签变化时回 UI 线程刷新并记日志。
-// 另按**在线布尔边沿**(含首查基线)上报 MQTT 打印机状态——「就绪↔缺纸」标签变但在线态不变,不上报;
-// 上报在监测 goroutine 内直发(paho 线程安全),不进 UI 线程、不影响 NudgeOnline 与刷新路径。
+// 每次巡检把结果写入共享在线注册表(定时 state 上报据此合成快照),本函数不直接上报云端。
 func (a *App) monitorLoop(snap model.Printer, stop <-chan struct{}) {
-	last := ""              // 上次显示的状态标签
-	var lastOnline *bool    // 上次上报的在线布尔;nil=尚未首查
+	last := ""       // 上次显示的状态标签
+	lastOnline := -1 // 上次在线布尔(-1=未定):独立于 label 边沿(就绪↔缺纸等在线内变化不算离线)
 	for {
 		t0 := time.Now()
 		st := printsvc.Status(&snap)
 		info := statusInfoFor(st)
+		online := st.Reachable && st.Online
 		if info.label != last {
 			last = info.label
 			ic := info
@@ -90,10 +99,23 @@ func (a *App) monitorLoop(snap model.Printer, stop <-chan struct{}) {
 				a.svc.NudgeOnline(snap.ID)
 			}
 		}
-		if online := st.Reachable && st.Online; a.mc != nil && (lastOnline == nil || *lastOnline != online) {
-			lastOnline = &online
-			a.mc.PublishPrinterStatus(&snap, online, info.label+"("+info.detail+")")
+		// 在线布尔边沿 → 系统通知:首查只记基线不通知(启动/监测重建〔改属性/改名停旧起新〕静默,
+		// 防启动风暴与假恢复),此后由在线转离线、由离线恢复在线各通知一次。
+		switch {
+		case lastOnline < 0:
+			lastOnline = b2i(online)
+		case online != (lastOnline == 1):
+			lastOnline = b2i(online)
+			if online {
+				a.notify(notifyInfo, "打印机已恢复在线",
+					fmt.Sprintf("『%s』%s 已恢复在线", snap.Name, snap.Address()))
+			} else {
+				a.notify(notifyWarn, "打印机离线",
+					fmt.Sprintf("『%s』%s 检测离线(%s)", snap.Name, snap.Address(), info.detail))
+			}
 		}
+		// 每次巡检把结果写入共享在线注册表(定时 state 上报据此合成,detail 保持新鲜)。
+		a.svc.SetPrinterOnline(snap.ID, online, info.label+"("+info.detail+")")
 		wait := pingInterval - time.Since(t0)
 		if wait < 0 {
 			wait = 0

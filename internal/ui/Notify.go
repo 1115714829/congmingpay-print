@@ -1,0 +1,109 @@
+package ui
+
+import (
+	"fmt"
+	"unicode/utf16"
+
+	"congmingpay/internal/logger"
+	"congmingpay/internal/printsvc"
+)
+
+// notifyLevel 是系统通知级别,映射托盘气泡图标(信息/警告/错误)。
+type notifyLevel int
+
+const (
+	notifyInfo notifyLevel = iota
+	notifyWarn
+	notifyError
+)
+
+// NOTIFYICONDATA 固定缓冲区为 szInfoTitle=64、szInfo=256 个 UTF-16 码元(含 NUL 终止位);
+// walk 对缓冲区做裸 copy 不保证终止符,必须自行截断。
+const (
+	notifyTitleMax = 63
+	notifyBodyMax  = 255
+)
+
+// notify 发送一条 Windows 系统通知(Win7=托盘气泡,Win10 及以上由系统渲染为通知中心 Toast)。
+// 任意 goroutine 可调用:非阻塞(Synchronize 仅投递消息),满足 printsvc 回调「快速返回」契约;
+// UI 未就绪(托盘尚未创建/已退出)或设置关闭系统通知时静默丢弃。
+func (a *App) notify(level notifyLevel, title, msg string) {
+	if !a.notifyReady.Load() {
+		return
+	}
+	a.mw.Synchronize(func() { // walk 调用与 a.cfg 读一律回 UI 线程
+		if a.tray == nil || a.cfg.Settings.NotifyDisabled {
+			return
+		}
+		if msg == "" {
+			msg = title // szInfo 空串=撤下气泡而非显示,兜底用标题
+		}
+		t := truncateUTF16(title, notifyTitleMax)
+		m := truncateUTF16(msg, notifyBodyMax)
+		var err error
+		switch level {
+		case notifyError:
+			err = a.tray.ShowError(t, m)
+		case notifyWarn:
+			err = a.tray.ShowWarning(t, m)
+		default:
+			err = a.tray.ShowInfo(t, m)
+		}
+		if err != nil {
+			logger.Errorf("系统通知发送失败: %v(%s | %s)", err, t, m)
+		} else {
+			logger.Infof("系统通知: %s | %s", t, m)
+		}
+	})
+}
+
+// truncateUTF16 把 s 截断到至多 n 个 UTF-16 码元;超长时以「…」结尾且不劈开代理对。
+func truncateUTF16(s string, n int) string {
+	u := utf16.Encode([]rune(s))
+	if len(u) <= n {
+		return s
+	}
+	u = u[:n-1] // 留一位给「…」
+	if k := len(u); k > 0 && u[k-1] >= 0xD800 && u[k-1] <= 0xDBFF {
+		u = u[:k-1] // 尾部是高代理则一并去掉
+	}
+	return string(utf16.Decode(u)) + "…"
+}
+
+// NotifyJobEvent 是打印任务事件的系统通知入口,由 main 装配进 printsvc.SetOnJobEvent
+// (与 MQTT report 上报并联)。failed(终态)与 waiting(长期卡单,每单至多一次)通知,
+// done 不通知;本地任务(CloudID==nil,测试打印/打印样票)同样通知。
+func (a *App) NotifyJobEvent(ev printsvc.JobEvent) {
+	switch ev.Event {
+	case printsvc.EventFailed:
+		a.notify(notifyError, "打印失败",
+			fmt.Sprintf("任务#%d 打印机『%s』:%s", ev.JobNo, ev.Printer.Name, ev.Err))
+	case printsvc.EventWaiting:
+		a.notify(notifyWarn, "打印任务长时间等待",
+			fmt.Sprintf("任务#%d 打印机『%s』:%s", ev.JobNo, ev.Printer.Name, ev.Err))
+	}
+}
+
+// mqttNotifyEdge 按连接布尔做边沿去重:已连→断开、断开→恢复各通知一次。
+// 仅在 UI 线程(onStatus 的 Synchronize 闭包)调用,mqttNotifySt 无需加锁。
+// 未启用/已停用(Active()==false)重置为中性——Close/reconnect 置 cli=nil 时不触发
+// onStatus 回调,中性判断必须在每次回调里做,不能依赖「停用事件」。
+// 首个状态只记基线不通知(启动即弹「已连接」/启动即连不上均静默);
+// 同一状态的重复触发(ConnectionLost 连发 setConnected+setErr 两次回调)静默。
+func (a *App) mqttNotifyEdge() {
+	if a.mc == nil || !a.mc.Active() {
+		a.mqttNotifySt = 0
+		return
+	}
+	ok, detail := a.mc.Status()
+	switch {
+	case ok && a.mqttNotifySt == 2:
+		a.mqttNotifySt = 1
+		a.notify(notifyInfo, "云端连接已恢复", detail)
+	case ok:
+		a.mqttNotifySt = 1
+	case !ok && a.mqttNotifySt == 1:
+		a.mqttNotifySt = 2
+		a.notify(notifyWarn, "云端连接断开", detail+";正在自动重连")
+	}
+}

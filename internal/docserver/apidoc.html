@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>票据打印服务器 · API 接口文档</title>
+<title>聪明付票据打印服务器 · 接口文档</title>
 <style>
   :root { --fg:#1f2328; --muted:#57606a; --border:#d0d7de; --bg:#ffffff; --code-bg:#f6f8fa; --accent:#0969da; }
   * { box-sizing: border-box; }
@@ -23,190 +23,371 @@
   code { background:var(--code-bg); border-radius:4px; padding:1px 5px; font-family:Consolas,"Courier New",monospace; font-size:90%; }
   pre { background:var(--code-bg); border:1px solid var(--border); border-radius:6px; padding:14px 16px; overflow:auto; }
   pre code { background:none; padding:0; }
-  ul { margin:10px 0; padding-left:22px; }
+  ul, ol { margin:10px 0; padding-left:22px; }
   li { margin:4px 0; }
   .req { color:#cf222e; font-weight:600; }
   .opt { color:var(--muted); }
+  .toc { background:var(--code-bg); border:1px solid var(--border); border-radius:6px; padding:14px 18px; margin:16px 0; }
+  .toc ol { margin:6px 0 0; }
+  .toc a { color:var(--accent); text-decoration:none; }
+  .toc a:hover { text-decoration:underline; }
   footer { margin-top:48px; padding-top:16px; border-top:1px solid var(--border); color:var(--muted); font-size:13px; }
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <h1>票据打印服务器 · API 接口文档</h1>
-  <p class="subtitle">面向餐厅厨房的热敏小票打印服务器。云端下发指令，本地服务执行，通过 USB 或网口打印。</p>
+  <h1>聪明付票据打印服务器 · 接口文档</h1>
+  <p class="subtitle">云端／服务端与本服务之间的 MQTT 接口规范 · 文档版本 v1.4（2026-07-08）</p>
 
   <div class="notice">
-    本页仅供接口文档查看，为只读页面。数据通信通过 MQTT 完成，本服务不提供打印或数据接口。
+    本页为只读接口文档。本服务不提供 HTTP 数据接口，数据通信全部经由 MQTT 完成。
   </div>
 
-  <h2>一、通信方式</h2>
-  <p>云端与本服务之间的唯一通道为 MQTT（MQTT 3.1.1）。本服务作为客户端连接指定的 broker，订阅短商户号主题以接收打印消息，并向系统设置中配置的「上报主题」发布受理回执、打印结果、打印机列表、打印机在线离线与服务在线状态。支持服务端单主题一对多接入：所有客户端可发布到同一主题（如 <code>server</code>），每条上行消息均携带 <code>merchant</code>（短商户号）字段标识来源。</p>
+  <nav class="toc">
+    <strong>目录</strong>
+    <ol>
+      <li><a href="#s1">文档信息</a></li>
+      <li><a href="#s2">术语与约定</a></li>
+      <li><a href="#s3">通信通道</a></li>
+      <li><a href="#s4">下行接口</a></li>
+      <li><a href="#s5">排版元素规范（type=0）</a></li>
+      <li><a href="#s6">上行接口</a></li>
+      <li><a href="#s7">错误码</a></li>
+      <li><a href="#s8">限制与约束汇总</a></li>
+      <li><a href="#s9">完整示例</a></li>
+      <li><a href="#s10">补充约定</a></li>
+      <li><a href="#s11">修订记录</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="s1">一、文档信息</h2>
+  <table>
+    <tr><th>项目</th><th>内容</th></tr>
+    <tr><td>文档名称</td><td>聪明付票据打印服务器 接口文档</td></tr>
+    <tr><td>文档版本</td><td>v1.4</td></tr>
+    <tr><td>发布日期</td><td>2026-07-08</td></tr>
+    <tr><td>适用范围</td><td>云端／服务端与本服务（Windows 打印客户端）之间的 MQTT 接口对接</td></tr>
+    <tr><td>维护约定</td><td>本页与仓库根目录《接口文档.md》内容保持同步</td></tr>
+  </table>
+
+  <h2 id="s2">二、术语与约定</h2>
+  <h3>2.1 术语表</h3>
+  <table>
+    <tr><th>术语</th><th>说明</th></tr>
+    <tr><td>本服务</td><td>聪明付票据打印服务器（Windows 端程序），MQTT 客户端角色</td></tr>
+    <tr><td>短商户号（merchant）</td><td>聪明付分配的商户标识，仅含字母、数字与下划线。用作下行订阅主题，并作为全部上行消息的来源标识字段</td></tr>
+    <tr><td>上报主题</td><td>本服务发布全部上行消息的 MQTT 主题，由本服务设置页配置（例如 <code>server</code>）</td></tr>
+    <tr><td>打印机</td><td>本服务中登记的一台热敏小票打印机（网口或 USB）</td></tr>
+    <tr><td>任务</td><td>一次打印请求经受理后生成的打印作业，以任务号（<code>jobNo</code>）标识</td></tr>
+    <tr><td>打印回执（report）</td><td>上行消息之一：打印请求的受理与执行结果，<code>event</code> 字段区分阶段（受理／卡单／成功／失败）</td></tr>
+    <tr><td>状态快照（state）</td><td>上行消息之一：服务在线状态与全部打印机（配置参数＋在线状态）的全量快照</td></tr>
+    <tr><td>错误码（code）</td><td>全局分段数字码，0＝成功，非 0 时首位数字表示阶段，见第七章</td></tr>
+    <tr><td>整单拒绝</td><td>打印请求中任一内容非法时，整条请求不打印，打印回执 <code>event</code> 为 <code>failed</code> 并携带错误码</td></tr>
+    <tr><td>纸宽</td><td>热敏纸宽度，取值 58 或 80（毫米）。58mm 每行 32 字符，80mm 每行 48 字符（中文按 2 字符计）</td></tr>
+  </table>
+  <h3>2.2 数据约定</h3>
   <ul>
-    <li>连接：Broker 地址与端口（默认 1883），用户名与密码，明文传输。</li>
-    <li>消息质量等级：QoS 1。</li>
-    <li>断线自动重连；异常断开时由 broker 代发遗嘱消息（LWT），内容为服务离线状态（发布至上报主题）。</li>
-    <li><strong>启用 MQTT 时 Broker、端口（1-65535）、用户名、密码、短商户号、上报主题全部必填</strong>，任一未填写或非法无法保存设置。</li>
-    <li>短商户号仅允许字母、数字与下划线，其余字符在输入时自动去除。</li>
-    <li>上报主题由配置指定（完整发布主题，可含 <code>/</code>，不得含通配符 <code>+</code>、<code>#</code>，不得与短商户号即订阅主题相同——否则上报会被自己收到形成消息回环）。配置为空或与订阅主题相同时服务不连接。旧版本配置升级时自动迁移为 <code>&lt;短商户号&gt;/report</code>，可改为服务端约定的主题。</li>
-    <li>上行发布为尽力送达：不排队、不补发；发布失败或未连接时，原因记录于日志文件 <code>congmingpay.log</code>。</li>
+    <li>报文均为 UTF-8 编码的 JSON。</li>
+    <li>字段表中「必填」列：必填＝缺失即拒绝；可选＝缺失时按「默认」列取值。</li>
+    <li><strong>严格校验总则</strong>：字段缺失时按本文档声明的默认值处理（合法）；字段存在但取值非法时<strong>整单拒绝</strong>，不应用默认值、无降级。显式 <code>null</code> 视作字段缺失。仅校验被该元素实际消费的字段。</li>
   </ul>
 
-  <h3>主题</h3>
+  <h2 id="s3">三、通信通道</h2>
+  <h3>3.1 连接参数</h3>
+  <table>
+    <tr><th>参数</th><th>说明</th></tr>
+    <tr><td>协议</td><td>MQTT 3.1.1，明文 TCP</td></tr>
+    <tr><td>Broker 地址／端口</td><td>由本服务设置页配置，端口默认 <code>1883</code></td></tr>
+    <tr><td>鉴权</td><td>用户名／密码</td></tr>
+    <tr><td>ClientID</td><td>填写短商户号</td></tr>
+    <tr><td>KeepAlive</td><td>60 秒</td></tr>
+    <tr><td>会话</td><td>CleanSession；断线自动重连（重连间隔最大 30 秒），重连后自动恢复订阅</td></tr>
+    <tr><td>QoS</td><td>订阅与发布均为 QoS 1</td></tr>
+    <tr><td>遗嘱（LWT）</td><td>主题＝上报主题，内容＝简版状态快照（服务离线，见 6.3）</td></tr>
+  </table>
+  <h3>3.2 主题</h3>
   <table>
     <tr><th>方向</th><th>主题</th><th>内容</th></tr>
-    <tr><td>下行（订阅）</td><td><code>&lt;短商户号&gt;</code></td><td>打印消息，为单个 JSON 对象或对象数组</td></tr>
-    <tr><td>上行（发布）</td><td>配置的「上报主题」（如 <code>server</code>）</td><td>受理回执（<code>type=ack</code>）、打印结果（<code>type=result</code>）、打印机列表（<code>type=printerList</code>）、打印机在线离线（<code>type=printerStatus</code>）、服务在线状态（<code>type=status</code>），全部携带 <code>merchant</code> 来源字段</td></tr>
+    <tr><td>下行（本服务订阅）</td><td><code>&lt;短商户号&gt;</code></td><td>打印消息：单个 JSON 对象或对象数组（见第四章）</td></tr>
+    <tr><td>上行（本服务发布）</td><td>上报主题</td><td>两类上行消息：打印回执 <code>report</code> 与状态快照 <code>state</code>（见第六章），全部携带 <code>merchant</code> 字段</td></tr>
   </table>
+  <p>单主题一对多模型：服务端可仅使用一个上报主题（例如 <code>server</code>）接收全部客户端的上行消息，按消息内 <code>merchant</code> 字段区分来源；各客户端的下行订阅主题（短商户号）相互独立。</p>
+  <p>上报主题约束：为完整发布主题，可包含 <code>/</code>；不得包含通配符 <code>+</code>、<code>#</code>；不得等于订阅主题（短商户号），否则上行消息将被本服务自身接收并形成消息循环。</p>
+  <h3>3.3 投递语义</h3>
+  <ul>
+    <li>上行发布为尽力送达：不排队、不补发。MQTT 未连接或发布失败时，消息丢弃，原因记录于本服务日志文件 <code>congmingpay.log</code>。</li>
+    <li>断线期间产生的上行消息不可恢复。状态快照（state）为定时全量上报（见 6.3），单条丢失由后续周期自动补齐；服务端可按「超过约 2.5 分钟未收到 <code>state</code>」判定客户端异常，并结合打印回执（report）自行兜底。</li>
+  </ul>
 
-  <h2>二、打印消息（PrintRequest）</h2>
-  <p>消息 payload 为一个打印请求对象，或一个打印请求对象数组。数组中的每个元素为一个独立的打印请求，各自处理，互不影响。收到的每一条消息都会处理并打印。</p>
-
-  <h3>字段</h3>
+  <h2 id="s4">四、下行接口</h2>
+  <p>下行报文按顶层字段分流：顶层 <code>query</code> 为非空字符串的单个对象为查询消息（见 4.6）；其余为打印消息（单个打印请求对象，或打印请求对象的数组）。</p>
+  <h3>4.1 打印消息报文结构</h3>
+  <p>消息 payload 为一个打印请求对象，或打印请求对象的数组。数组中每个元素为一条独立请求，各自受理、各自回执，互不影响；本服务不做去重，收到的每条请求均会处理。</p>
   <table>
     <tr><th>字段</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr>
-    <tr><td><code>printer</code></td><td>字符串 或 对象</td><td class="opt">与 gateway 二选一</td><td>—</td><td>打印目标。字符串表示已注册打印机的名称或 ID；对象为 <code>{name, ip, brand, width}</code></td></tr>
-    <tr><td><code>gateway</code></td><td>字符串</td><td class="opt">与 printer 二选一</td><td>—</td><td>网口 IP（如 <code>192.168.68.194</code>），或 <code>"usb"</code> 表示首台已注册 USB 打印机</td></tr>
-    <tr><td><code>id</code></td><td>整数</td><td class="opt">可选</td><td>0</td><td>请求标识，仅用于回执与日志对应，不用于去重</td></tr>
-    <tr><td><code>type</code></td><td>整数</td><td class="opt">可选</td><td>5</td><td>内容类型。见下文「内容类型」</td></tr>
-    <tr><td><code>pWidth</code></td><td>整数</td><td class="opt">可选</td><td>按打印机设置</td><td>纸张宽度（毫米），不填或 58 或 80；填其它值拒绝</td></tr>
-    <tr><td><code>pCopy</code></td><td>整数</td><td class="opt">可选</td><td>1</td><td>打印份数</td></tr>
-    <tr><td><code>contents</code></td><td>数组 或 字符串</td><td class="opt">可选</td><td>—</td><td>打印内容。<code>type=5</code> 时为排版元素数组；<code>type=1</code> 时为 base64 字符串</td></tr>
-    <tr><td><code>buzzer</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>蜂鸣：0 关闭，1 开启</td></tr>
-    <tr><td><code>cut</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>切刀：0 不切纸，1 切纸</td></tr>
-    <tr><td><code>reprint</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>重打提示标题：0 普通，1 在小票顶部添加「重打」标题</td></tr>
-    <tr><td><code>headLines</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>首部空行数，取值 0-100（0 表示默认），超出范围拒绝</td></tr>
-    <tr><td><code>tailLines</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>尾部空行数，取值 0-100（0 表示默认），超出范围拒绝</td></tr>
+    <tr><td><code>printer</code></td><td>字符串 或 对象</td><td class="opt">与 gateway 二选一</td><td>—</td><td>打印目标。字符串＝已登记打印机的名称或 ID（网口与 USB 通用）；对象见 4.1.1</td></tr>
+    <tr><td><code>gateway</code></td><td>字符串</td><td class="opt">与 printer 二选一</td><td>—</td><td>网口地址 <code>IP</code> 或 <code>IP:端口</code>（端口缺省 9100）。仅承载网口地址；USB 打印机以 <code>printer</code> 指定名称或 ID</td></tr>
+    <tr><td><code>id</code></td><td>整数</td><td class="opt">可选</td><td>0</td><td>请求标识，取值 0–4294967295。仅用于回执与日志对应，不用于去重。建议使用非 0 值且每单唯一</td></tr>
+    <tr><td><code>type</code></td><td>整数</td><td class="opt">可选</td><td>0</td><td>内容类型，见 4.5</td></tr>
+    <tr><td><code>pWidth</code></td><td>整数</td><td class="opt">可选</td><td>按打印机登记纸宽</td><td>渲染纸宽（毫米），取值 58 或 80；填其他值拒绝</td></tr>
+    <tr><td><code>pCopy</code></td><td>整数</td><td class="opt">可选</td><td>1</td><td>打印份数，小于等于 0 按 1 处理；每份生成一个任务，同一打印机按序打印</td></tr>
+    <tr><td><code>contents</code></td><td>数组 或 字符串</td><td class="opt">可选</td><td>—</td><td>打印内容：<code>type=0</code> 为排版元素数组（第五章）；<code>type=1</code> 为 base64 字符串</td></tr>
+    <tr><td><code>buzzer</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>蜂鸣：<code>0</code> 关闭，<code>1</code> 开启</td></tr>
+    <tr><td><code>cut</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>切刀：<code>0</code> 不切纸，<code>1</code> 切纸</td></tr>
+    <tr><td><code>reprint</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>重打标题：<code>0</code> 普通，<code>1</code> 在小票顶部添加醒目「重打」标题</td></tr>
+    <tr><td><code>headLines</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>首部空行数（绝对值），取值 0–100；<code>0</code> 表示不加首部空行</td></tr>
+    <tr><td><code>tailLines</code></td><td>整数</td><td class="req">必填</td><td>—</td><td>尾部走纸偏移，取值 0–100。实际尾部走纸行数＝基数＋偏移（基数：58mm 为 5 行，80mm 为 3 行）；<code>0</code> 表示按基数走纸</td></tr>
   </table>
-  <p><span class="req">必填</span>字段（<code>buzzer</code> / <code>cut</code> / <code>reprint</code> / <code>headLines</code> / <code>tailLines</code>）对所有内容类型均适用。缺失任一字段、<code>buzzer</code> / <code>cut</code> / <code>reprint</code> 取值非 0 或 1、<code>headLines</code> / <code>tailLines</code> 超出 0-100、<code>pWidth</code> 填了非 58/80 的值，请求均被拒绝，回执 <code>ok</code> 为 <code>false</code>，不应用默认值、无降级。</p>
-
-  <h3>内容类型（type）</h3>
+  <p>注：<code>id</code> 超出 uint32 范围（负数或大于 4294967295）会导致整条 payload 解析失败；数组 payload 中任一元素解析失败，则整个数组解析失败（见 4.2）。</p>
+  <h3>4.1.1 printer 对象</h3>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>说明</th></tr>
+    <tr><td><code>name</code></td><td>字符串</td><td>打印机名称。用于按名称选择已登记打印机；自动登记时作为新打印机名称，缺省时以 IP 作为名称</td></tr>
+    <tr><td><code>id</code></td><td>字符串</td><td>打印机 ID。仅用于选择已登记打印机</td></tr>
+    <tr><td><code>ip</code></td><td>字符串</td><td>网口地址。优先级高于 <code>gateway</code></td></tr>
+    <tr><td><code>port</code></td><td>字符串</td><td>网口端口，缺省 <code>9100</code></td></tr>
+    <tr><td><code>brand</code></td><td>字符串</td><td>品牌：<code>佳博</code>、<code>飞蛾</code>、<code>其他</code>。自动登记与身份覆盖时使用，缺省为 <code>其他</code></td></tr>
+    <tr><td><code>width</code></td><td>整数</td><td>纸宽 58 或 80。自动登记与身份覆盖时使用</td></tr>
+  </table>
+  <h3>4.2 校验与拒绝</h3>
+  <ul>
+    <li><code>buzzer</code>、<code>cut</code>、<code>reprint</code>、<code>headLines</code>、<code>tailLines</code> 五个字段对所有内容类型均为必填。缺失任一字段、<code>buzzer</code>／<code>cut</code>／<code>reprint</code> 取值非 0 或 1、<code>headLines</code>／<code>tailLines</code> 超出 0–100、<code>pWidth</code> 填写了非 58／80 的值，该条请求即被拒绝，打印回执 <code>event=failed</code> 并携带错误码与原因（第七章）。</li>
+    <li><code>contents</code> 内容非法时整单拒绝，规则见第五章。</li>
+    <li>整条 payload 无法解析为 JSON（或字段类型不符，如 <code>id</code> 越界）时，本服务发布一条 <code>event=failed</code>、<code>code=1001</code> 的打印回执，其 <code>id</code> 为 0 且不含 <code>jobNo</code>，<code>message</code> 以「解析失败」开头。</li>
+  </ul>
+  <h3>4.3 打印目标解析</h3>
+  <p>按以下顺序确定目标（<code>printer.ip</code> 优先于 <code>gateway</code>）：</p>
+  <ol>
+    <li><strong>网口地址</strong>（<code>printer.ip</code>，或 <code>gateway</code> 为 <code>IP</code>／<code>IP:端口</code>）：该 IP 已登记则直接使用；未登记则自动登记为新打印机。自动登记要求纸宽可确定——<code>printer.width</code> 或 <code>pWidth</code> 至少一个为 58 或 80，否则拒绝；名称缺省取 IP，品牌缺省 <code>其他</code>，端口缺省 <code>9100</code>。</li>
+    <li><strong>名称／ID 选择器</strong>（<code>printer</code> 为字符串，或对象仅含 <code>name</code>／<code>id</code>）：在已登记打印机中按 ID 或名称精确匹配，未找到则拒绝。名称与 ID 与状态快照（state，见 6.3）上报的 <code>printer</code>／<code>printerId</code> 对应。</li>
+    <li><code>printer</code> 与 <code>gateway</code> 均未提供：拒绝。</li>
+  </ol>
+  <p>USB 打印机仅可经名称／ID 选择器指定；<code>gateway</code> 填 <code>"usb"</code> 的请求拒绝（<code>code=3003</code>）。USB 目标不自动登记。</p>
+  <h3>4.4 参数持久化（以云端为准）</h3>
+  <p>每条受理成功的打印请求，会将以下内容覆盖并持久化到目标打印机配置：</p>
+  <ul>
+    <li>参数四项：<code>buzzer</code>、<code>cut</code>、<code>headLines</code>、<code>tailLines</code>；</li>
+    <li>身份字段：<code>printer.name</code>、<code>printer.brand</code>、<code>printer.width</code>（仅在提供且合法时覆盖，缺省不改动原值）。</li>
+  </ul>
+  <p><code>reprint</code> 为每单行为，仅对本单生效，不持久化。持久化后的参数以状态快照（state，见 6.3）回传，形成下发、持久化、上报确认的闭环。打印机属性页中的参数仅用于本地测试打印。</p>
+  <h3>4.5 内容类型（type）</h3>
   <table>
     <tr><th>取值</th><th>contents 形式</th><th>处理方式</th></tr>
-    <tr><td>不填 或 <code>0</code> 或 <code>5</code></td><td>排版元素数组</td><td>由服务端渲染为 ESC/POS 指令，包含编码、排版与纸宽自适应</td></tr>
-    <tr><td><code>1</code></td><td>base64 字符串</td><td>解码后作为原始 ESC/POS 指令直接下发，服务端不再排版</td></tr>
+    <tr><td>缺省 或 <code>0</code></td><td>排版元素数组</td><td>由本服务渲染为 ESC/POS，按纸宽自适应排版（第五章）</td></tr>
+    <tr><td><code>1</code></td><td>base64 字符串</td><td>解码后作为原始 ESC/POS 指令直接下发，不进行排版</td></tr>
   </table>
-  <p>两种类型的字节均由服务端统一收尾（蜂鸣、首尾空行、按 <code>cut</code> 切纸），因此 <code>type=1</code> 的 base64 内容无需包含切纸或走纸指令。</p>
-
-  <h3>打印目标解析</h3>
+  <p>其他取值拒绝。两种类型均由本服务统一收尾：蜂鸣、重打标题、首部空行、尾部走纸与切纸由报文顶层字段控制，<code>contents</code> 内无需（也不应）包含走纸或切纸指令。</p>
+  <h3>4.6 查询消息</h3>
+  <p>服务端向短商户号主题下发查询消息，按需拉取本服务的最新状态：</p>
+  <pre><code>{"query":"printers"}</code></pre>
   <ul>
-    <li><strong>网口 IP</strong>：<code>printer.ip</code> 或 <code>gateway</code> 为 IP。若该 IP 未注册，将在打印时自动登记为新的打印机；端口默认 9100。自动登记必须能确定纸宽：<code>printer.width</code> 或 <code>pWidth</code> 至少一个为 58 或 80，否则拒绝（不再默认 80）。</li>
-    <li><strong>USB</strong>：<code>gateway</code> 为 <code>"usb"</code>，或 <code>printer</code> 指定 USB 驱动名。选择已注册的 USB 打印机，不自动登记。</li>
-    <li><strong>名称或 ID</strong>：<code>printer</code> 为字符串。仅在已注册打印机中查找，未找到则返回错误。</li>
+    <li>查询消息为单个对象，顶层 <code>query</code> 为非空字符串；不支持放入数组。</li>
+    <li><code>query</code> 为 <code>"printers"</code>：本服务立即向上报主题发布一条全量状态快照（<code>state</code>，结构与定时上报一致，见 6.3）。</li>
+    <li><code>query</code> 为其他取值：本服务发布一条打印回执 <code>event=failed</code>、<code>code=1002</code>、<code>id=0</code>。</li>
   </ul>
-  <p>下发报文中的五个必填参数与 <code>printer</code> 身份字段（name、brand、width）将覆盖并持久化至目标打印机配置。</p>
 
-  <h2>三、排版元素（type=5）</h2>
-  <p><code>contents</code> 为排版元素数组，服务端按元素顺序渲染为 ESC/POS，并按纸张宽度自适应（58mm 为 32 字符，80mm 为 48 字符）。</p>
-  <div class="notice">
-    <strong>全部严格模式</strong>：字段缺失时使用下表声明的默认值（合法）；字段存在但取值非法时<strong>整单拒绝</strong>——不打印任何内容，回执 <code>ok:false</code> 且 <code>message</code> 带 <code>contents[&lt;下标&gt;](&lt;元素种类&gt;)</code> 定位与原因，同时写入日志。
-  </div>
+  <h2 id="s5">五、排版元素规范（type=0）</h2>
+  <h3>5.1 总则</h3>
+  <ul>
+    <li><code>contents</code> 为排版元素数组，按数组顺序渲染；每个元素为一个 JSON 对象。</li>
+    <li><strong>整单拒绝</strong>：任一元素含非法取值时，整条请求不打印，打印回执 <code>event=failed</code>、<code>code=4001</code>，<code>message</code> 格式为 <code>渲染失败: contents[&lt;下标&gt;](&lt;元素种类&gt;): &lt;原因&gt;</code>，下标为 0 基。</li>
+    <li>字段缺失（含显式 <code>null</code>）按各元素声明的默认值处理；仅校验被该元素消费的字段，未被消费的字段忽略。</li>
+    <li>元素种类由 <code>type</code> 字段决定；含 <code>thead</code> 的元素为表格（无需 <code>type</code>）；含 <code>both_sides</code> 的元素为左右两列（无需 <code>type</code>）。未知的 <code>type</code> 取值整单拒绝。</li>
+  </ul>
+  <h3>5.2 text（文本；type 缺省时的默认元素）</h3>
   <table>
-    <tr><th>元素（type）</th><th>说明与合法值</th></tr>
-    <tr><td><code>title</code></td><td>标题，居中加粗</td></tr>
-    <tr><td><code>text</code>（type 缺省时的默认）</td><td>文本。<code>bold</code>（布尔）；<code>size</code> 缺省=不放大，存在则须为两位 0-7 数字（如 <code>"11"</code>）；<code>align</code> 缺省=左，存在则须为 left、center、right；<code>cont</code> 缺省=输出空行，存在须为字符串。未知的 <code>type</code> 值整单拒绝</td></tr>
-    <tr><td><code>div_line</code> / <code>div_star</code></td><td>分割线（<code>-</code> 或 <code>*</code>），可附带居中标题</td></tr>
-    <tr><td>表格</td><td><code>thead</code> 为对象 <code>{列名:"宽%"}</code> 或字符串数组 <code>["宽%"]</code>；每列宽须为 1-100 的整数百分比且<strong>总和恰为 100</strong>；<code>tbody</code> 每行单元格数须等于列数，单元格须为字符串、数字或布尔（null、对象、数组拒绝）；有 <code>tbody</code> 必须有 <code>thead</code></td></tr>
-    <tr><td><code>both_sides</code></td><td>恰为 2 段文本的数组，分别左对齐与右对齐（段数不为 2 拒绝）</td></tr>
-    <tr><td><code>qrcode</code></td><td>二维码：<code>cont</code> 为字符串=单码，为恰含 2 项的字符串数组=双码；内容为空拒绝。<code>size</code> 暂不支持，忽略并记警告日志</td></tr>
-    <tr><td><code>bc128</code> / <code>code39</code></td><td>一维条码（Code128、Code39）。<code>size</code> 缺省=默认（高60/模宽2），存在须为 <code>"22"</code> 或 <code>"33"</code>；<code>hri</code> 缺省=0（无），存在须为 0-3；内容为空拒绝</td></tr>
-    <tr><td><code>png</code></td><td>图片：来源须为 http(s) URL 或 <code>data:image/...;base64,</code>；下载失败（含非 200 状态码）、解码失败均整单拒绝（上限 8MB、超时 10 秒）</td></tr>
-    <tr><td><code>cut</code></td><td>切纸元素在渲染时被忽略，切纸由报文顶层 <code>cut</code> 字段统一控制</td></tr>
+    <tr><th>字段</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr>
+    <tr><td><code>cont</code></td><td>字符串</td><td class="opt">可选</td><td>空行</td><td>文本内容；缺省输出一个空行</td></tr>
+    <tr><td><code>bold</code></td><td>布尔</td><td class="opt">可选</td><td><code>false</code></td><td>加粗</td></tr>
+    <tr><td><code>size</code></td><td>字符串</td><td class="opt">可选</td><td>不放大</td><td>两位数字 <code>"WH"</code>，W＝宽放大档、H＝高放大档，各 0–7（<code>"11"</code> 表示宽高各放大一档，即二倍字）。非两位或超出 0–7 拒绝</td></tr>
+    <tr><td><code>align</code></td><td>字符串</td><td class="opt">可选</td><td><code>left</code></td><td><code>left</code>、<code>center</code>、<code>right</code>；其他取值拒绝</td></tr>
   </table>
-
-  <h2>四、上行消息（发布至配置的「上报主题」）</h2>
-  <p>全部上行消息均携带 <code>"merchant":"&lt;短商户号&gt;"</code> 字段标识来源——服务端单主题一对多接入时据此分辨客户端。</p>
-  <h3>受理回执（ack）</h3>
-  <p>每条打印请求解析与受理后立即发布一条回执。<code>ok</code> 表示是否受理成功（校验、目标解析、渲染、进入队列），不代表最终打印结果；最终结果见下文 <code>result</code>。</p>
-  <pre><code>{"type":"ack","merchant":"M100001","id":6812801,"ok":true,"jobNo":1001,"message":"已提交"}</code></pre>
+  <pre><code>{"type":"text","cont":"桌号：A08","size":"11","bold":true,"align":"center"}</code></pre>
+  <h3>5.3 title（标题）</h3>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr>
+    <tr><td><code>cont</code></td><td>字符串</td><td class="opt">可选</td><td>空行</td><td>标题内容</td></tr>
+  </table>
+  <p>固定样式：居中、加粗、二倍字；不消费 <code>size</code>、<code>align</code>、<code>bold</code>。</p>
+  <pre><code>{"type":"title","cont":"结账单"}</code></pre>
+  <h3>5.4 div_line／div_star（分割线）</h3>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr>
+    <tr><td><code>cont</code></td><td>字符串</td><td class="opt">可选</td><td>整行填充</td><td>居中标题；提供时分割线形如 <code>---- 标题 ----</code></td></tr>
+  </table>
+  <p><code>div_line</code> 以 <code>-</code> 填充，<code>div_star</code> 以 <code>*</code> 填充，宽度为整行。</p>
+  <pre><code>{"type":"div_line"}
+{"type":"div_star","cont":"二维码"}</code></pre>
+  <h3>5.5 表格（含 thead 的元素）</h3>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr>
+    <tr><td><code>thead</code></td><td>对象 或 字符串数组</td><td class="req">必填</td><td>—</td><td>对象 <code>{列名:"宽%"}</code>（保持书写顺序，渲染表头行）或字符串数组 <code>["宽%"]</code>（不渲染表头行）。每列宽度须为 1–100 的整数百分比（容忍 <code>%</code> 后缀与空白），<strong>总和必须恰为 100</strong></td></tr>
+    <tr><td><code>tbody</code></td><td>二维数组</td><td class="opt">可选</td><td>空</td><td>数据行。每行单元格数必须等于列数；单元格仅接受字符串、数字、布尔（<code>null</code>、对象、数组拒绝）</td></tr>
+    <tr><td><code>size</code></td><td>字符串</td><td class="opt">可选</td><td>不放大</td><td>两位数字，规则同 text；表格取第一位作为宽高共同放大档</td></tr>
+    <tr><td><code>line_div</code></td><td>整数</td><td class="opt">可选</td><td>0</td><td>为 <code>1</code> 时每行之后输出一条 <code>-</code> 分割线</td></tr>
+    <tr><td><code>line_space</code></td><td>整数</td><td class="opt">可选</td><td>0</td><td>每行之后额外走纸的行数</td></tr>
+  </table>
+  <p>约束：有 <code>tbody</code> 而无 <code>thead</code> 拒绝。单元格内容超出列宽时按显示宽度自动换行（中文按 2 计）。</p>
+  <pre><code>{"thead":{"商品名称":"70%","数量":"15%","金额":"15%"},
+ "tbody":[["青椒肉丝（标准）","1份",0.01],["规格测试","1份",0.01]],"size":"00"}</code></pre>
+  <h3>5.6 both_sides（左右两列）</h3>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr>
+    <tr><td><code>both_sides</code></td><td>字符串数组</td><td class="req">必填</td><td>—</td><td>恰为 2 个元素：左侧文本与右侧文本，分别左对齐与右对齐；元素个数不为 2 拒绝</td></tr>
+    <tr><td><code>size</code></td><td>字符串</td><td class="opt">可选</td><td>不放大</td><td>两位数字，规则同 text</td></tr>
+  </table>
+  <pre><code>{"both_sides":["实付金额","0.02"],"size":"11"}</code></pre>
+  <h3>5.7 qrcode（二维码）</h3>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr>
+    <tr><td><code>cont</code></td><td>字符串 或 字符串数组</td><td class="req">必填</td><td>—</td><td>字符串＝单码；恰含 2 项的字符串数组＝并排双码。内容为空拒绝；数组元素个数不为 2 拒绝</td></tr>
+    <tr><td><code>align</code></td><td>字符串</td><td class="opt">可选</td><td><code>left</code></td><td>对齐，规则同 text</td></tr>
+    <tr><td><code>size</code></td><td>字符串</td><td class="opt">可选</td><td>—</td><td>不消费该字段：忽略并记录警告日志，按默认模块大小渲染</td></tr>
+  </table>
+  <p>约束：单码内容上限 2953 字节（QR Model 2 容量）；双码内容超出容量时因生成失败而整单拒绝。</p>
+  <pre><code>{"type":"qrcode","cont":"https://example.com/pay/123","align":"center"}</code></pre>
+  <h3>5.8 bc128／code39（一维条码）</h3>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr>
+    <tr><td><code>cont</code></td><td>字符串</td><td class="req">必填</td><td>—</td><td>条码内容，非空且不超过 250 字节</td></tr>
+    <tr><td><code>size</code></td><td>字符串</td><td class="opt">可选</td><td>高 60 点／模块宽 2</td><td><code>"22"</code>＝高 90／宽 3，<code>"33"</code>＝高 120／宽 4；其他取值拒绝</td></tr>
+    <tr><td><code>hri</code></td><td>整数</td><td class="opt">可选</td><td>0</td><td>可读字符位置：<code>0</code> 无，<code>1</code> 上方，<code>2</code> 下方，<code>3</code> 上下；其他取值拒绝</td></tr>
+    <tr><td><code>align</code></td><td>字符串</td><td class="opt">可选</td><td><code>left</code></td><td>对齐，规则同 text</td></tr>
+  </table>
+  <p><code>bc128</code> 为 Code128（码集 B），<code>code39</code> 为 Code39；字符集兼容性由打印机固件决定。</p>
+  <pre><code>{"type":"bc128","cont":"10132607070942533965136","align":"center","size":"22","hri":2}</code></pre>
+  <h3>5.9 png（图片）</h3>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr>
+    <tr><td><code>cont</code></td><td>字符串</td><td class="req">必填</td><td>—</td><td>图片来源：<code>http(s)</code> URL，或 <code>data:image/...;base64,&lt;数据&gt;</code></td></tr>
+    <tr><td><code>align</code></td><td>字符串</td><td class="opt">可选</td><td><code>left</code></td><td>对齐，规则同 text</td></tr>
+  </table>
+  <ul>
+    <li>图片按内容识别，支持 PNG、JPEG、GIF 编码；渲染为单色位图（含抖动）。</li>
+    <li>URL 来源：下载超时 10 秒、大小上限 8MB，HTTP 状态码非 200 拒绝。</li>
+    <li>下载失败、来源格式非法、解码失败均整单拒绝。</li>
+  </ul>
+  <h2 id="s6">六、上行接口</h2>
+  <h3>6.1 通用约定</h3>
+  <p>上行消息共两类：<strong>打印回执（<code>report</code>）</strong>与<strong>状态快照（<code>state</code>）</strong>。</p>
+  <ul>
+    <li>全部上行消息发布至上报主题，QoS 1。</li>
+    <li>全部上行消息携带 <code>"merchant":"&lt;短商户号&gt;"</code> 字段，标识消息来源客户端。</li>
+    <li>全部上行消息携带 <code>"type"</code> 字段标识消息类型；<code>ts</code> 为毫秒级 Unix 时间戳。</li>
+  </ul>
+  <h3>6.2 report（打印回执）</h3>
+  <p>打印请求的受理与执行结果，统一结构，<code>event</code> 字段区分阶段：</p>
+  <table>
+    <tr><th>event</th><th>时机</th><th>code</th><th>携带内容</th></tr>
+    <tr><td><code>accepted</code></td><td>请求受理成功、进入打印队列</td><td>0</td><td><code>printer</code>＋<code>params</code>（本单完整上下文）</td></tr>
+    <tr><td><code>failed</code></td><td>受理失败（解析／校验／目标／渲染）</td><td>1xxx–4xxx</td><td>目标已解析时携带 <code>printer</code></td></tr>
+    <tr><td><code>waiting</code></td><td>任务持续被拒超 20 秒（每单至多一次）</td><td>5101</td><td><code>printer</code></td></tr>
+    <tr><td><code>done</code></td><td>打印成功（数据已发送至打印机，或已提交 Windows 打印队列）</td><td>0</td><td><code>printer</code></td></tr>
+    <tr><td><code>failed</code></td><td>打印执行失败（写入失败、USB 提交失败等不重试场景）</td><td>5001／5002</td><td><code>printer</code></td></tr>
+  </table>
+  <p>每单消息序：<code>accepted →（waiting）→ done／failed</code>；受理失败时仅一条 <code>failed</code>。</p>
+  <ul>
+    <li>处于「等待重试」的任务（打印机离线、打印口被占用）在终态前仅可能发布一条 <code>waiting</code>；等待期间被取消的任务不再发布。</li>
+    <li>在本服务界面执行「重新打印」的任务再次到达终态时重复发布（<code>jobNo</code> 相同）。</li>
+    <li>本地操作（测试打印、打印样票）不上报。</li>
+  </ul>
+  <pre><code>{"type":"report","merchant":"M100001","event":"accepted","id":6812801,"jobNo":1001,
+ "code":0,"message":"已提交",
+ "printer":{"printerId":"p1720000000-1","printer":"飞蛾1","brand":"飞蛾","width":80,
+            "conn":"network","ip":"192.168.68.194","port":"9100"},
+ "params":{"buzzer":1,"cut":1,"reprint":0,"headLines":0,"tailLines":0,"pWidth":80,"pCopy":1,"contentType":0},
+ "ts":1720000000000}</code></pre>
+  <pre><code>{"type":"report","merchant":"M100001","event":"done","id":6812801,"jobNo":1001,
+ "code":0,"message":"打印成功",
+ "printer":{"printerId":"p1720000000-1","printer":"飞蛾1","brand":"飞蛾","width":80,
+            "conn":"network","ip":"192.168.68.194","port":"9100"},
+ "ts":1720000000000}</code></pre>
+  <pre><code>{"type":"report","merchant":"M100001","event":"failed","id":6812802,
+ "code":4001,"message":"渲染失败: contents[3](table): thead 列宽 \"abc%\" 非法(需 1-100 的整数百分比)","ts":1720000000000}</code></pre>
   <table>
     <tr><th>字段</th><th>说明</th></tr>
-    <tr><td><code>type</code></td><td>固定为 <code>"ack"</code></td></tr>
-    <tr><td><code>merchant</code></td><td>本客户端的短商户号(来源身份)</td></tr>
-    <tr><td><code>id</code></td><td>对应请求的 <code>id</code>，字段恒存在。整条消息解析失败时无法取得原 id，该回执 <code>id</code> 为 <code>0</code> 且不含 <code>jobNo</code>（建议云端使用非 0 的 id，以免与解析失败回执混淆）</td></tr>
-    <tr><td><code>ok</code></td><td>是否受理成功。排版内容非法被整单拒绝时为 false，<code>message</code> 带 <code>contents[i]</code> 定位</td></tr>
-    <tr><td><code>jobNo</code></td><td>任务号，<code>ok</code> 为 true 时返回</td></tr>
-    <tr><td><code>message</code></td><td>结果说明或失败原因</td></tr>
+    <tr><td><code>event</code></td><td>阶段，见上表</td></tr>
+    <tr><td><code>id</code></td><td>回显请求的 <code>id</code>，字段恒存在。整条 payload 解析失败时无法取得原 <code>id</code>，回执 <code>id</code> 为 0 且不含 <code>jobNo</code>。建议云端使用非 0 的 <code>id</code> 以便区分</td></tr>
+    <tr><td><code>jobNo</code></td><td>任务号；同一 <code>jobNo</code> 的各阶段回执据此关联</td></tr>
+    <tr><td><code>code</code></td><td>全局错误码，0＝成功，非 0 见第七章</td></tr>
+    <tr><td><code>message</code></td><td>成功为 <code>"已提交"</code>／<code>"打印成功"</code>；失败与等待为原因文本（格式见第七章）</td></tr>
+    <tr><td><code>printer</code></td><td>打印机身份：<code>printerId</code>／<code>printer</code>（名称）／<code>brand</code>／<code>width</code>／<code>conn</code>／<code>ip</code>＋<code>port</code>（网口）或 <code>usbName</code>（USB）。目标未解析时省略</td></tr>
+    <tr><td><code>params</code></td><td>本单生效参数（仅 <code>accepted</code> 携带）：<code>buzzer</code>／<code>cut</code>／<code>reprint</code>／<code>headLines</code>／<code>tailLines</code>／<code>pWidth</code>（实际渲染纸宽）／<code>pCopy</code>（实际份数）／<code>contentType</code></td></tr>
   </table>
-  <h3>打印结果（result）</h3>
-  <p>任务到达终态（成功/失败）时发布。成功（已发送至打印机 / 已交 Windows 打印后台）为 <code>ok:true</code>；失败（已连接但写入失败、USB 交付失败等不重试场景）为 <code>ok:false</code>。处于「等待重试」的任务（离线、占用）暂不发布，待其最终打成或失败时发布；期间被取消的任务不发布。手动「重新打印」再次到达终态会再次发布（同 <code>jobNo</code>）。本地操作（测试打印、打印样票）不上报。</p>
-  <pre><code>{"type":"result","merchant":"M100001","id":6812801,"jobNo":1001,"ok":true,"printer":"飞蛾1","message":"打印成功","ts":1720000000000}</code></pre>
-  <table>
-    <tr><th>字段</th><th>说明</th></tr>
-    <tr><td><code>type</code></td><td>固定为 <code>"result"</code></td></tr>
-    <tr><td><code>merchant</code></td><td>本客户端的短商户号(来源身份)</td></tr>
-    <tr><td><code>id</code></td><td>对应请求的 <code>id</code>，恒回显（含 0）</td></tr>
-    <tr><td><code>jobNo</code></td><td>任务号，与受理回执中的 <code>jobNo</code> 对应</td></tr>
-    <tr><td><code>ok</code></td><td>打印是否成功</td></tr>
-    <tr><td><code>printer</code></td><td>打印机名称</td></tr>
-    <tr><td><code>message</code></td><td><code>"打印成功"</code> 或失败原因</td></tr>
-    <tr><td><code>ts</code></td><td>毫秒时间戳</td></tr>
-  </table>
-  <h3>打印机列表（printerList）</h3>
-  <p>全量快照（含每台配置参数），服务器以最新一条为准（幂等）。触发时机：①连接成功后随 <code>status online</code> 发全量基线；②云端消息导致自动登记或参数覆盖后；③本地新增、删除、属性保存后；④JSON 测试造成列表变更后。条目不含在线状态——在线离线以 <code>printerStatus</code> 消息流为准。</p>
-  <pre><code>{"type":"printerList","merchant":"M100001","printers":[
+  <h3>6.3 state（状态快照）</h3>
+  <p>服务在线状态与全部打印机（配置参数＋在线状态）的<strong>全量快照</strong>；服务端以最新一条为准（幂等），无需拼装增量。</p>
+  <p>发布时机（定时上报）：①连接成功后立即发布一次；②此后每 1 分钟发布一次；③收到查询消息 <code>{"query":"printers"}</code> 时发布一次（见 4.6）。打印机状态与配置的变化不即时上报，最坏滞后 1 分钟；需要即时对账时服务端下发查询消息。</p>
+  <pre><code>{"type":"state","merchant":"M100001","online":true,
+ "printers":[
   {"printerId":"p1720000000-1","printer":"飞蛾1","brand":"飞蛾","width":80,"conn":"network",
-   "ip":"192.168.68.194","port":"9100","buzzer":true,"cut":true,"headLines":0,"tailLines":0,"lastPrint":"云端下发"}
-],"ts":1720000000000}</code></pre>
+   "ip":"192.168.68.194","port":"9100","online":true,"detail":"就绪(ping 3ms)",
+   "buzzer":true,"cut":true,"headLines":0,"tailLines":0,"lastPrint":"云端下发"}
+ ],"ts":1720000000000}</code></pre>
+  <p>离线为简版（本服务正常退出、MQTT 停用或连接配置变更时主动发布；异常断开时由 broker 按遗嘱发布）：</p>
+  <pre><code>{"type":"state","merchant":"M100001","online":false}</code></pre>
   <table>
     <tr><th>字段</th><th>说明</th></tr>
-    <tr><td><code>type</code></td><td>固定为 <code>"printerList"</code></td></tr>
-    <tr><td><code>merchant</code></td><td>本客户端的短商户号(来源身份)</td></tr>
-    <tr><td><code>printers[].printerId</code> / <code>printer</code> / <code>brand</code> / <code>width</code></td><td>打印机 ID、名称、品牌、纸宽（58/80）</td></tr>
-    <tr><td><code>printers[].conn</code> / <code>ip</code> / <code>port</code> / <code>usbName</code></td><td>连接方式与地址（网口给 ip/port，USB 给 usbName）</td></tr>
-    <tr><td><code>printers[].buzzer</code> / <code>cut</code> / <code>headLines</code> / <code>tailLines</code></td><td>每台配置参数当前值（云端下发覆盖后的持久化结果，构成「下发 → 持久化 → 上报确认」闭环）</td></tr>
-    <tr><td><code>printers[].lastPrint</code></td><td>最近打印(展示用)</td></tr>
-    <tr><td><code>ts</code></td><td>毫秒时间戳</td></tr>
-  </table>
-  <h3>打印机在线离线（printerStatus）</h3>
-  <p>任一打印机的在线状态发生变化时立即发布；服务启动后每台设备的首次检测结果也作为基线发布。<code>printers</code> 为数组，支持一条消息承载多台设备状态（当前每次包含发生变动的设备）。</p>
-  <pre><code>{"type":"printerStatus","merchant":"M100001","printers":[
-  {"printerId":"p1720000000-1","printer":"飞蛾1","conn":"network","ip":"192.168.68.194","port":"9100","online":true,"detail":"就绪(ping 3ms)"}
-],"ts":1720000000000}</code></pre>
-  <table>
-    <tr><th>字段</th><th>说明</th></tr>
-    <tr><td><code>type</code></td><td>固定为 <code>"printerStatus"</code></td></tr>
-    <tr><td><code>merchant</code></td><td>本客户端的短商户号(来源身份)</td></tr>
-    <tr><td><code>printers</code></td><td>设备状态数组，元素字段见下</td></tr>
-    <tr><td><code>printers[].printerId</code> / <code>printer</code></td><td>打印机 ID 与名称</td></tr>
+    <tr><td><code>online</code></td><td>本服务是否在线。<code>false</code> 时为简版，不含 <code>printers</code> 与 <code>ts</code></td></tr>
+    <tr><td><code>printers[].printerId</code>／<code>printer</code></td><td>打印机 ID 与名称</td></tr>
+    <tr><td><code>printers[].brand</code>／<code>width</code></td><td>品牌（<code>佳博</code>／<code>飞蛾</code>／<code>其他</code>）与纸宽（58／80）</td></tr>
     <tr><td><code>printers[].conn</code></td><td><code>"network"</code>（网口）或 <code>"usb"</code></td></tr>
-    <tr><td><code>printers[].ip</code> / <code>port</code></td><td>网口地址（USB 时省略；port 为空表示默认 9100）</td></tr>
+    <tr><td><code>printers[].ip</code>／<code>port</code></td><td>网口地址与端口（USB 时省略）</td></tr>
     <tr><td><code>printers[].usbName</code></td><td>USB 驱动名（网口时省略）</td></tr>
-    <tr><td><code>printers[].online</code></td><td>是否在线</td></tr>
-    <tr><td><code>printers[].detail</code></td><td>人类可读描述</td></tr>
-    <tr><td><code>ts</code></td><td>毫秒时间戳</td></tr>
+    <tr><td><code>printers[].online</code>／<code>detail</code></td><td>该打印机是否在线与可读描述（检测方式与耗时等）</td></tr>
+    <tr><td><code>printers[].buzzer</code>／<code>cut</code>／<code>headLines</code>／<code>tailLines</code></td><td>每台参数当前值（云端下发覆盖后的持久化结果）。注：<code>tailLines</code> 为尾部走纸偏移量，本地属性页允许设置负值</td></tr>
+    <tr><td><code>printers[].lastPrint</code></td><td>最近打印描述（展示用途，可省略）</td></tr>
   </table>
-  <h3>服务在线状态（status）</h3>
-  <p>连接并订阅成功后发布上线状态；主动退出或异常断开（遗嘱）时发布离线状态。</p>
-  <pre><code>{"type":"status","merchant":"M100001","event":"online","ts":1720000000000}
-{"type":"status","merchant":"M100001","event":"offline"}</code></pre>
-  <p>上行消息的 <code>type</code> 与字段为本程序约定，可与云端协商调整。</p>
 
-  <h2>五、打印与队列行为</h2>
-  <p>打印任务进入队列后，按连接方式分为网口与 USB 两条独立路径。</p>
-  <h3>网口打印</h3>
-  <ul>
-    <li>派发前先通过 ICMP 探测判断是否在线；离线则进入等待队列。状态探测不使用打印端口 9100。</li>
-    <li>实际打印结果为最终判据。打印口被占用或未就绪（连接被拒绝）时，任务进入等待队列并按 1 至 3 秒退避重试，占用释放后自动打印。</li>
-    <li>网络超时或不可达时，任务进入等待队列并按 5 至 30 秒退避重试，恢复连接后自动打印。</li>
-    <li>已连接但写入失败时，任务标记为失败，不自动重试。</li>
-    <li>每台打印机使用一把打印串行锁，同一时刻仅建立一个连接；多份或并发任务串行打印。空闲无任务时不接触端口 9100。</li>
-    <li>连接被拒绝持续约 20 秒后，在打印队列的详情列与日志中显示警告（端口可能未就绪或打印机故障），任务保持等待，不自动失败。</li>
-  </ul>
-  <h3>USB 打印</h3>
-  <ul>
-    <li>USB 打印通过 Windows 打印后台（打印驱动）完成，不进行 ICMP 在线探测，不接触端口 9100，不参与被占用或离线的重试逻辑。</li>
-    <li>成功交付打印后台即视为完成（打印机离线时，Windows 会在其恢复后补打）；交付失败（驱动、名称或配置错误）即标记为失败。</li>
-  </ul>
-  <h3>重打</h3>
-  <p>「重打」提示标题由两种方式触发：在打印队列中点击「重新打印」，或下发报文 <code>reprint</code> 为 1。两种方式均会在小票顶部添加「重打」标题，并遵循上述队列规则。<code>reprint</code> 为 0 的普通打印不显示该标题。</p>
+  <h2 id="s7">七、错误码</h2>
+  <p>打印回执（report）的 <code>code</code> 字段为全局错误码：<code>0</code>＝成功；非 0 时首位数字表示阶段（1 报文解析／2 字段校验／3 打印目标／4 内容渲染／5 打印执行）。<code>message</code> 为对应的中文原因文本，排版类错误带 <code>contents[&lt;下标&gt;](&lt;元素种类&gt;)</code> 定位。</p>
+  <table>
+    <tr><th>code</th><th>含义</th><th>message 示例</th></tr>
+    <tr><td>1001</td><td>报文解析失败（<code>id</code> 回 0）</td><td><code>解析失败: &lt;JSON 错误&gt;</code></td></tr>
+    <tr><td>1002</td><td>不支持的 <code>query</code> 取值（<code>id</code> 回 0）</td><td><code>不支持的 query: foo(支持 "printers")</code></td></tr>
+    <tr><td>2001</td><td>缺少必填字段</td><td><code>缺少必填字段: buzzer、cut(buzzer/cut/reprint/headLines/tailLines 均必传)</code></td></tr>
+    <tr><td>2002</td><td>开关取值非法</td><td><code>buzzer 只能为 0 或 1</code></td></tr>
+    <tr><td>2003</td><td>空行范围非法</td><td><code>headLines 需在 0-100 之间</code></td></tr>
+    <tr><td>2004</td><td><code>pWidth</code> 非法</td><td><code>pWidth 需为 58 或 80(或不填)</code></td></tr>
+    <tr><td>2005</td><td>内容类型不支持</td><td><code>不支持的 type: 3(仅 0=JSON 排版 / 1=ESC base64)</code></td></tr>
+    <tr><td>3001</td><td>未指定打印目标</td><td><code>未指定打印目标(printer 或 gateway 至少填一个)</code></td></tr>
+    <tr><td>3002</td><td>打印机未找到</td><td><code>未找到打印机: &lt;名称或ID&gt;</code></td></tr>
+    <tr><td>3003</td><td>USB 目标非法</td><td><code>USB 打印以 printer 指定打印机名称(gateway 仅支持网口 IP)</code></td></tr>
+    <tr><td>3004</td><td>无法确定纸宽</td><td><code>无法确定纸宽: 自动登记新打印机需 printer.width 或 pWidth 为 58/80(收到 printer.width=0、pWidth=0)</code></td></tr>
+    <tr><td>4001</td><td>排版内容非法</td><td><code>渲染失败: contents[3](table): thead 列宽 "abc%" 非法(需 1-100 的整数百分比)</code></td></tr>
+    <tr><td>4002</td><td>排版数组非法（<code>contents</code> 整体非元素数组）</td><td><code>渲染失败: &lt;JSON 错误&gt;</code></td></tr>
+    <tr><td>4003</td><td>文本编码失败（GB18030 无法编码的字符）</td><td><code>渲染失败: &lt;编码错误&gt;</code></td></tr>
+    <tr><td>4004</td><td>ESC 指令解码失败（<code>type=1</code>）</td><td><code>渲染失败: &lt;base64/JSON 错误&gt;</code></td></tr>
+    <tr><td>5001</td><td>网口写入失败（终态）</td><td>底层网络错误原文</td></tr>
+    <tr><td>5002</td><td>USB 提交失败（终态）</td><td><code>打开打印机 "..." 失败: ...</code> 等</td></tr>
+    <tr><td>5101</td><td>长期等待告警（event=<code>waiting</code>，非终态）</td><td><code>长期等待·疑似端口未就绪/故障(请检查 IP/端口/打印机): ...</code></td></tr>
+    <tr><td>9001</td><td>未知错误（兜底）</td><td>—</td></tr>
+  </table>
 
-  <h2>六、示例</h2>
-  <h3>单台（网口 IP，未注册时自动登记）</h3>
+  <h2 id="s8">八、限制与约束汇总</h2>
+  <table>
+    <tr><th>项目</th><th>约束</th></tr>
+    <tr><td><code>id</code></td><td>0–4294967295（uint32）</td></tr>
+    <tr><td><code>pWidth</code></td><td>缺省，或 58／80</td></tr>
+    <tr><td><code>headLines</code></td><td>0–100（绝对空行数）</td></tr>
+    <tr><td><code>tailLines</code></td><td>0–100（相对基数偏移；基数 58mm＝5 行、80mm＝3 行）</td></tr>
+    <tr><td><code>size</code>（text／表格／both_sides）</td><td>两位数字，每位 0–7</td></tr>
+    <tr><td>表格列宽</td><td>每列 1–100 的整数百分比，总和恰为 100</td></tr>
+    <tr><td>表格行</td><td>每行单元格数＝列数；单元格仅字符串／数字／布尔</td></tr>
+    <tr><td><code>both_sides</code></td><td>恰 2 个字符串元素</td></tr>
+    <tr><td>条码内容</td><td>非空，≤ 250 字节</td></tr>
+    <tr><td>单码二维码内容</td><td>非空，≤ 2953 字节</td></tr>
+    <tr><td>图片（URL 来源）</td><td>≤ 8MB，下载超时 10 秒，HTTP 200</td></tr>
+    <tr><td>上报主题</td><td>可含 <code>/</code>；禁 <code>+</code>、<code>#</code>；不得等于短商户号</td></tr>
+    <tr><td>每行字符数</td><td>58mm＝32，80mm＝48（中文按 2 计）</td></tr>
+  </table>
+
+  <h2 id="s9">九、完整示例</h2>
+  <h3>9.1 单台（printer 对象，未登记则自动登记）</h3>
   <pre><code>{
   "printer": {"name":"飞蛾1","ip":"192.168.68.194","brand":"飞蛾","width":80},
   "id": 6812801,
-  "type": 5,
+  "type": 0,
   "pWidth": 80,
   "pCopy": 1,
   "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
@@ -216,14 +397,65 @@
     {"type":"div_line"},
     {"thead":{"商品名称":"85%","数量":"15%"},"tbody":[["猪肉大葱小笼包","1笼"]]},
     {"type":"div_line"},
+    {"both_sides":["实付金额","0.02"]},
     {"cont":"总计：1件","type":"text","bold":true,"align":"right"}
   ]
 }</code></pre>
-  <h3>多台（数组，一次下发多条）</h3>
-  <p>最外层为数组 <code>[ {…}, {…} ]</code>，每个元素结构同上，各自指定 <code>printer</code> 或 <code>gateway</code> 与内容。数组中多个元素指向同一台打印机时，该打印机按顺序依次打印。</p>
+  <h3>9.2 多台（数组，一次下发多条）</h3>
+  <p>最外层为数组 <code>[ {…}, {…} ]</code>，每个元素结构同 9.1，各自指定 <code>printer</code> 或 <code>gateway</code> 与内容。多个元素指向同一台打印机时，该打印机按顺序依次打印。</p>
+  <h3>9.3 gateway 指定网口地址</h3>
+  <pre><code>{
+  "gateway": "192.168.68.194",
+  "id": 6812858,
+  "type": 0,
+  "pWidth": 58,
+  "pCopy": 1,
+  "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
+  "contents": [
+    {"cont":"取餐号 A012","type":"title"},
+    {"thead":{"商品名称":"75%","数量":"25%"},"tbody":[["小笼包","1笼"]]}
+  ]
+}</code></pre>
+  <h3>9.4 名称指定 USB 打印机</h3>
+  <pre><code>{
+  "printer": "打印1",
+  "id": 1615411580,
+  "type": 0,
+  "pWidth": 80,
+  "pCopy": 1,
+  "buzzer": 1, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
+  "contents": [ {"cont":"USB 打印","type":"title"} ]
+}</code></pre>
+  <h3>9.5 type=1（原始 ESC/POS）</h3>
+  <pre><code>{
+  "gateway": "192.168.68.194",
+  "id": 1615411581,
+  "type": 1,
+  "pWidth": 80,
+  "pCopy": 1,
+  "buzzer": 0, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
+  "contents": "G0BIZWxsbyBFU0MvUE9TCg=="
+}</code></pre>
+  <p><code>contents</code> 为完整 ESC/POS 指令的 base64 编码；走纸与切纸仍由顶层字段统一收尾，指令内无需包含。</p>
+
+  <h2 id="s10">十、补充约定</h2>
+  <ul>
+    <li>上报主题无默认值，须在本服务设置页配置；未配置时本服务不连接 MQTT，原因记录于日志。</li>
+    <li>上行消息的 <code>type</code> 与字段名为本服务与服务端的约定，如需调整以双方协商结果为准。</li>
+  </ul>
+
+  <h2 id="s11">十一、修订记录</h2>
+  <table>
+    <tr><th>版本</th><th>日期</th><th>说明</th></tr>
+    <tr><td>v1.0</td><td>2026-07-08</td><td>初版：通信通道、下行打印消息、排版元素规范、五类上行消息、错误与限制汇总</td></tr>
+    <tr><td>v1.1</td><td>2026-07-08</td><td>ClientID 改为短商户号；内容类型 <code>type</code> 取值改为 <code>0</code>（JSON 排版，默认）与 <code>1</code>（原始 ESC/POS）；移除 <code>cut</code> 排版元素</td></tr>
+    <tr><td>v1.2</td><td>2026-07-08</td><td>上行消息合并为 <code>report</code>（打印回执）与 <code>state</code>（状态快照）两类；新增全局错误码（<code>code</code> 字段与第七章码表）；新增 <code>waiting</code> 卡单事件；<code>accepted</code> 回执携带打印机身份与本单参数</td></tr>
+    <tr><td>v1.3</td><td>2026-07-08</td><td>USB 打印目标以打印机名称或 ID 指定（与状态快照上报对应）；<code>gateway</code> 仅承载网口地址；移除 <code>printer.usbName</code> 寻址与 <code>gateway:"usb"</code> 首台匹配；错误码 3003 改为「USB 目标非法」</td></tr>
+    <tr><td>v1.4</td><td>2026-07-08</td><td><code>state</code> 状态快照改为定时上报（连接成功立即一次、此后每 1 分钟一次）；新增下行查询消息 <code>{"query":"printers"}</code> 按需拉取全量 <code>state</code>；移除状态变化即时上报；新增错误码 1002</td></tr>
+  </table>
 
   <footer>
-    本页由票据打印服务器内置的只读文档服务提供，仅供接口查看。数据通信通过 MQTT 完成。
+    聪明付票据打印服务器 接口文档 v1.4 · 本页由本服务内置只读文档服务提供，与仓库《接口文档.md》内容保持同步。
   </footer>
 
 </div>
