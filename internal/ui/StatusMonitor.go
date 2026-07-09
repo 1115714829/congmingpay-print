@@ -74,48 +74,124 @@ func (a *App) stopAllMonitors() {
 }
 
 // monitorLoop 每台一条:后台不间断检测(网口 ICMP ping、USB winspool),约 1 次/秒。
-// 不做防抖——超时即离线、通即在线;仅状态标签变化时回 UI 线程刷新并记日志。
-// 每次巡检把结果写入共享在线注册表(定时 state 上报据此合成快照),本函数不直接上报云端。
+// 网口做离线防抖(offlineAfter=30s):连续失败持续满窗才判离线,期间任一次 ping 通立即回在线;
+// USB 本地查询无丢包问题,不防抖(窗口 0,结果即时生效)。
+// 三个独立边沿:①原始成功边沿 → NudgeOnline(「联通即打」不受防抖拖慢,容错窗口内恢复也秒打);
+// ②生效标签边沿 → 表格刷新 + 状态日志(容错/离线持续期间标签不变,零刷屏);
+// ③生效在线布尔边沿 → 系统通知 + 常驻告警窗(首个生效态记基线静默:启动/监测重建不通知)。
+// 每轮把生效态写入共享在线注册表(定时 state 上报据此合成快照),本函数不直接上报云端。
 func (a *App) monitorLoop(snap model.Printer, stop <-chan struct{}) {
-	last := ""       // 上次显示的状态标签
-	lastOnline := -1 // 上次在线布尔(-1=未定):独立于 label 边沿(就绪↔缺纸等在线内变化不算离线)
+	window := offlineAfter
+	isNet := snap.Conn != model.ConnUSB
+	if !isNet {
+		window = 0
+	}
+	deb := newOnlineDebouncer(window)
+	stats := pingStats{offlineWindow: window}
+	lastLabel := ""         // 生效标签边沿(UI 表格 + 状态日志)
+	lastEff := -1           // 生效在线布尔边沿(通知/告警窗;-1=基线未定)
+	lastRaw := -1           // 原始探测边沿(NudgeOnline)
+	var lastGood statusInfo // 最近一次原始在线的显示信息(容错窗口沿用其标签防闪烁)
+
 	for {
 		t0 := time.Now()
 		st := printsvc.Status(&snap)
-		info := statusInfoFor(st)
-		online := st.Reachable && st.Online
-		if info.label != last {
-			last = info.label
+		// Status 的 1s ping 超时可能横跨 close(stop):被停(删除/重建)后不再产出任何
+		// 边沿动作——否则删除后迟到的 raise 会留下无人能自动消除的孤儿告警。
+		select {
+		case <-stop:
+			return
+		default:
+		}
+		raw := st.Reachable && st.Online
+		eff := deb.observe(t0, raw, st.Detail)
+
+		// ① 原始成功边沿 → 立即催打等待任务(容错窗口内恢复不产生 eff 边沿,等待任务仍应秒打)。
+		if raw && lastRaw != 1 {
+			a.svc.NudgeOnline(snap.ID)
+		}
+		lastRaw = b2i(raw)
+
+		// ② 折算生效显示信息。
+		var info statusInfo
+		switch {
+		case eff == 1 && raw: // 正常在线(USB 就绪/缺纸/错误子状态照常)
+			info = statusInfoFor(st)
+			lastGood = info
+		case eff == 1: // 容错窗口:保持在线标签防闪烁,detail 记抖动进展
+			info = lastGood
+			info.detail = fmt.Sprintf("网络抖动: 连续失败 %v(%s)",
+				deb.failFor(t0).Truncate(time.Second), st.Detail)
+		case eff == 0:
+			info = statusInfo{label: "离线", color: colGray, detail: fmt.Sprintf("%s;已持续 %v",
+				deb.failFirst, deb.failFor(t0).Truncate(time.Second))}
+		default: // eff == -1 启动即连败,防抖窗内未定:表格维持「—」
+			info = statusInfo{label: "—", color: colGray, detail: "检测中(" + st.Detail + ")"}
+		}
+
+		// ③ 生效标签边沿 → 日志 + 回 UI 线程刷表格。
+		// 日志在监测 goroutine 里写(文件 I/O 不占 UI 线程),UI 线程只做状态赋值 + 列表重绘。
+		if info.label != lastLabel {
+			lastLabel = info.label
 			ic := info
-			// 日志在监测 goroutine 里写(文件 I/O 不占 UI 线程,避免拖慢随后的队列刷新);
-			// UI 线程只做状态赋值 + 列表重绘。
 			logger.Infof("打印机状态: [id=%s] 名称『%s』%s → %s(%s)", snap.ID, snap.Name, snap.Address(), ic.label, ic.detail)
 			a.mw.Synchronize(func() {
 				a.printerModel.status[snap.ID] = ic
 				a.refreshPrinters()
 			})
-			// 该机变为在线(标签非离线/检测中)→ 催它的「等待重试」任务立即打,不等退避。
-			if ic.label != "离线" && ic.label != "—" {
-				a.svc.NudgeOnline(snap.ID)
-			}
 		}
-		// 在线布尔边沿 → 系统通知:首查只记基线不通知(启动/监测重建〔改属性/改名停旧起新〕静默,
-		// 防启动风暴与假恢复),此后由在线转离线、由离线恢复在线各通知一次。
+
+		// ④ 生效在线布尔边沿 → 系统通知 + 告警窗(基线静默:启动/监测重建〔改属性/改名〕不通知)。
 		switch {
-		case lastOnline < 0:
-			lastOnline = b2i(online)
-		case online != (lastOnline == 1):
-			lastOnline = b2i(online)
-			if online {
+		case eff < 0: // 未定:不通知不告警
+		case lastEff < 0:
+			lastEff = eff
+			if eff == 1 {
+				// 基线静默只免通知,不免收尾:监测重建(改对 IP/改名)前挂起的
+				// 离线告警,重建后首个在线基线即消除(resolve 幂等,不存在则忽略)。
+				a.alertResolve(alertPrinterOffline, snap.ID)
+			} else {
+				// 启动/监测重建即离线:不弹系统通知(防启动风暴),但进常驻告警窗;
+				// 「已持续」按程序工作时间算(程序启动后首次探测失败起)。
+				a.alertRaise(alertPrinterOffline, snap.ID, alertError,
+					fmt.Sprintf("打印机离线 『%s』%s(%s)", snap.Name, snap.Address(), deb.failFirst),
+					t0.Add(-deb.failFor(t0)))
+			}
+		case eff != lastEff:
+			lastEff = eff
+			if eff == 1 {
 				a.notify(notifyInfo, "打印机已恢复在线",
 					fmt.Sprintf("『%s』%s 已恢复在线", snap.Name, snap.Address()))
+				a.alertResolve(alertPrinterOffline, snap.ID)
 			} else {
 				a.notify(notifyWarn, "打印机离线",
 					fmt.Sprintf("『%s』%s 检测离线(%s)", snap.Name, snap.Address(), info.detail))
+				// 告警行文本只带首因,时长交给「已持续」列动态显示;起点=断连开始时刻(failSince)
+				a.alertRaise(alertPrinterOffline, snap.ID, alertError,
+					fmt.Sprintf("打印机离线 『%s』%s(%s)", snap.Name, snap.Address(), deb.failFirst),
+					t0.Add(-deb.failFor(t0)))
 			}
 		}
-		// 每次巡检把结果写入共享在线注册表(定时 state 上报据此合成,detail 保持新鲜)。
-		a.svc.SetPrinterOnline(snap.ID, online, info.label+"("+info.detail+")")
+
+		// ⑤ 在线注册表写生效态(detail 每轮新鲜:抖动/离线持续时长可被 state 上报带出)。
+		// 未定态(-1)不写:监测重建首轮恰逢丢包时,沿用旧监测写入的生效态,
+		// 避免向定时 state 上报暴露本功能要压制的单包假离线;冷启动缺项本就默认离线,不劣化。
+		if eff >= 0 {
+			a.svc.SetPrinterOnline(snap.ID, eff == 1, info.label+"("+info.detail+")")
+		}
+
+		// ⑥ 丢包统计与抖动日志(仅网口;窗口内无丢包不落日志)。
+		if isNet {
+			sl, jl := stats.record(t0, raw, st.RTTms, st.Detail)
+			if jl != "" {
+				logger.Infof("网络抖动: [id=%s] 名称『%s』%s %s", snap.ID, snap.Name, snap.Address(), jl)
+			}
+			if sl != "" {
+				logger.Infof("ping 统计: [id=%s] 名称『%s』%s 最近 %v %s",
+					snap.ID, snap.Name, snap.Address(), pingStatsEvery, sl)
+			}
+		}
+
 		wait := pingInterval - time.Since(t0)
 		if wait < 0 {
 			wait = 0

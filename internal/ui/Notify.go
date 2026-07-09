@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
+	"time"
 	"unicode/utf16"
 
 	"congmingpay/internal/logger"
@@ -70,17 +72,23 @@ func truncateUTF16(s string, n int) string {
 	return string(utf16.Decode(u)) + "…"
 }
 
-// NotifyJobEvent 是打印任务事件的系统通知入口,由 main 装配进 printsvc.SetOnJobEvent
-// (与 MQTT report 上报并联)。failed(终态)与 waiting(长期卡单,每单至多一次)通知,
-// done 不通知;本地任务(CloudID==nil,测试打印/打印样票)同样通知。
+// NotifyJobEvent 是打印任务事件的系统通知与告警窗入口,由 main 装配进 printsvc.SetOnJobEvent
+// (与 MQTT report 上报并联)。failed(终态)与 waiting(长期卡单,每单至多一次)通知并进告警窗;
+// done 不发通知,但消掉此前同任务的等待告警;本地任务(CloudID==nil,测试打印/打印样票)同样通知。
 func (a *App) NotifyJobEvent(ev printsvc.JobEvent) {
+	key := strconv.Itoa(ev.JobNo)
 	switch ev.Event {
 	case printsvc.EventFailed:
-		a.notify(notifyError, "打印失败",
-			fmt.Sprintf("任务#%d 打印机『%s』:%s", ev.JobNo, ev.Printer.Name, ev.Err))
+		txt := fmt.Sprintf("任务#%d 打印机『%s』:%s", ev.JobNo, ev.Printer.Name, ev.Err)
+		a.notify(notifyError, "打印失败", txt)
+		a.alertResolve(alertJobWaiting, key) // 终态收敛:等待告警随失败转失败行
+		a.alertRaise(alertJobFailed, key, alertError, "打印失败 "+txt, time.Now())
 	case printsvc.EventWaiting:
-		a.notify(notifyWarn, "打印任务长时间等待",
-			fmt.Sprintf("任务#%d 打印机『%s』:%s", ev.JobNo, ev.Printer.Name, ev.Err))
+		txt := fmt.Sprintf("任务#%d 打印机『%s』:%s", ev.JobNo, ev.Printer.Name, ev.Err)
+		a.notify(notifyWarn, "打印任务长时间等待", txt)
+		a.alertRaise(alertJobWaiting, key, alertWarn, "长时间等待 "+txt, time.Now())
+	case printsvc.EventDone:
+		a.alertResolve(alertJobWaiting, key)
 	}
 }
 
@@ -100,10 +108,12 @@ func (a *App) mqttNotifyEdge() {
 	case ok && a.mqttNotifySt == 2:
 		a.mqttNotifySt = 1
 		a.notify(notifyInfo, "云端连接已恢复", detail)
+		a.alertResolve(alertMqttDown, "")
 	case ok:
 		a.mqttNotifySt = 1
 	case !ok && a.mqttNotifySt == 1:
 		a.mqttNotifySt = 2
 		a.notify(notifyWarn, "云端连接断开", detail+";正在自动重连")
+		a.alertRaise(alertMqttDown, "", alertError, "云端连接断开:"+detail, time.Now())
 	}
 }

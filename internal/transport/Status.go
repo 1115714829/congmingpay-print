@@ -11,6 +11,7 @@ type PrinterStatus struct {
 	CoverOpen bool   // 上盖打开(仅 USB winspool 可能给出)
 	PaperOut  bool   // 缺纸(仅 USB winspool 可能给出)
 	Error     bool   // 存在错误(仅 USB winspool 可能给出)
+	RTTms     int    // 往返时延 ms(仅网口 ping 成功时有效;供监测丢包统计,不上报云端)
 	Detail    string // 人类可读描述
 }
 

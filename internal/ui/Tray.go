@@ -1,6 +1,9 @@
 package ui
 
-import "github.com/lxn/walk"
+import (
+	"github.com/lxn/walk"
+	"github.com/lxn/win"
+)
 
 // setupTray 创建系统托盘图标与右键菜单(显示主窗口 / 退出)。
 func (a *App) setupTray(icon *walk.Icon) error {
@@ -22,7 +25,10 @@ func (a *App) setupTray(icon *walk.Icon) error {
 	if err := a.addTrayAction(ni, "显示主窗口", a.showMainWindow); err != nil {
 		return err
 	}
-	if err := a.addTrayAction(ni, "退出", func() { walk.App().Exit(0) }); err != nil {
+	if err := a.addTrayAction(ni, "退出", func() {
+		a.quitting = true // 放行主窗口 Closing 拦截(Exit 本不经 Closing,置位为保险)
+		walk.App().Exit(0)
+	}); err != nil {
 		return err
 	}
 
@@ -48,6 +54,11 @@ func (a *App) addTrayAction(ni *walk.NotifyIcon, text string, handler func()) er
 }
 
 func (a *App) showMainWindow() {
+	// walk 的 Show 底层是 SW_SHOWNA:对最小化窗口保持最小化,SetFocus 也不还原——
+	// 最小化状态须先 SW_RESTORE,否则托盘/通知/告警窗的「打开主窗口」点了没反应。
+	if win.IsIconic(a.mw.Handle()) {
+		win.ShowWindow(a.mw.Handle(), win.SW_RESTORE)
+	}
 	a.mw.Show()
 	a.mw.SetFocus()
 }

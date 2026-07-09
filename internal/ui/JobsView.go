@@ -41,7 +41,7 @@ func (a *App) jobsPageWidget() Composite {
 
 func (a *App) refreshJobs() {
 	a.jobModel.items = a.svc.Jobs()
-	a.jobModel.PublishRowsReset()
+	publishTableRefresh(&a.jobModel.TableModelBase, len(a.jobModel.items))
 }
 
 func (a *App) selectedJob() *model.Job {
@@ -62,6 +62,9 @@ func (a *App) onRetryJob() {
 		return
 	}
 	a.svc.Retry(j.No)
+	// 任务重新入队,旧告警作废(再失败/再卡单会重新挂起)
+	a.alertResolve(alertJobFailed, strconv.Itoa(j.No))
+	a.alertResolve(alertJobWaiting, strconv.Itoa(j.No))
 	a.flash("任务 #" + strconv.Itoa(j.No) + " 已重新加入队列")
 }
 
@@ -72,6 +75,9 @@ func (a *App) onCancelJob() {
 		return
 	}
 	a.svc.Cancel(j.No)
+	// 取消的任务不保留告警行
+	a.alertResolve(alertJobFailed, strconv.Itoa(j.No))
+	a.alertResolve(alertJobWaiting, strconv.Itoa(j.No))
 	a.refreshJobs()
 	a.flash("已取消任务 #" + strconv.Itoa(j.No))
 }

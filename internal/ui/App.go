@@ -30,8 +30,17 @@ type App struct {
 	tray *walk.NotifyIcon
 
 	// 系统通知(Notify.go)
-	notifyReady  atomic.Bool // 托盘就绪后置 true;守卫早于托盘/晚于退出的通知投递
+	notifyReady  atomic.Bool // 托盘就绪后置 true;守卫早于托盘/晚于退出的通知与告警投递
 	mqttNotifySt int         // MQTT 通知边沿状态:0=中性(未启用/未定) 1=已连 2=已断;仅 UI 线程读写
+
+	// 常驻告警窗(AlertWindow.go;alertDlg/alertTV/alertModel 仅 UI 线程读写)
+	alertDlg   *walk.Dialog
+	alertTV    *walk.TableView
+	alertModel *AlertModel
+
+	// 关闭按钮最小化到托盘(仅 UI 线程读写)
+	quitting      bool // 托盘「退出」置位:放行 Closing,不再拦截为隐藏
+	trayHintShown bool // 首次最小化到托盘的提示,每次运行至多一条
 
 	navPrinters  *walk.PushButton
 	navJobs      *walk.PushButton
@@ -78,7 +87,8 @@ func NewApp(cfg *config.Config, cfgPath string, svc *printsvc.Service, mc *mqtt.
 	return &App{
 		cfg: cfg, cfgPath: cfgPath, svc: svc, mc: mc, ds: ds,
 		printerModel: newPrinterModel(), jobModel: newJobModel(),
-		monitors: map[string]*monitorHandle{},
+		alertModel: &AlertModel{},
+		monitors:   map[string]*monitorHandle{},
 	}
 }
 
@@ -137,6 +147,21 @@ func (a *App) Run() error {
 	if icon != nil {
 		_ = a.mw.SetIcon(icon)
 	}
+	// 关闭按钮(X/Alt+F4)最小化到系统托盘,程序保持运行;退出仅经托盘右键菜单「退出」
+	// (置 quitting 放行;托盘退出走 walk.App().Exit 本就不经 Closing)。
+	// 系统关机/注销走 WM_QUERYENDSESSION,不发 WM_CLOSE,此拦截不阻塞关机。
+	a.mw.Closing().Attach(func(canceled *bool, _ walk.CloseReason) {
+		if a.quitting {
+			return
+		}
+		*canceled = true
+		a.mw.Hide()
+		if !a.trayHintShown {
+			a.trayHintShown = true
+			a.notify(notifyInfo, a.serviceName(),
+				"程序已最小化到系统托盘,继续在后台运行。点击托盘图标打开主窗口;退出程序经托盘右键菜单的「退出」。")
+		}
+	})
 	if err := a.setupTray(icon); err != nil {
 		logger.Errorf("托盘初始化失败: %v", err)
 	} else {
@@ -173,7 +198,10 @@ func (a *App) Run() error {
 	a.syncMonitors() // 为每台已注册打印机起后台持续 ping 监测
 
 	a.mw.Run()
-	a.notifyReady.Store(false) // 窗口已退出,后续通知直接丢弃
+	a.notifyReady.Store(false) // 窗口已退出,后续通知/告警直接丢弃
+	if a.alertDlg != nil {
+		a.alertDlg.Dispose() // mw.Run 返回后仍在 UI 线程,可安全销毁
+	}
 	a.stopAllMonitors()
 	return nil
 }

@@ -38,7 +38,7 @@
 <div class="wrap">
 
   <h1>聪明付票据打印服务器 · 接口文档</h1>
-  <p class="subtitle">云端／服务端与本服务之间的 MQTT 接口规范 · 文档版本 v1.4（2026-07-08）</p>
+  <p class="subtitle">云端／服务端与本服务之间的 MQTT 接口规范 · 文档版本 v1.5（2026-07-09）</p>
 
   <div class="notice">
     本页为只读接口文档。本服务不提供 HTTP 数据接口，数据通信全部经由 MQTT 完成。
@@ -65,8 +65,8 @@
   <table>
     <tr><th>项目</th><th>内容</th></tr>
     <tr><td>文档名称</td><td>聪明付票据打印服务器 接口文档</td></tr>
-    <tr><td>文档版本</td><td>v1.4</td></tr>
-    <tr><td>发布日期</td><td>2026-07-08</td></tr>
+    <tr><td>文档版本</td><td>v1.5</td></tr>
+    <tr><td>发布日期</td><td>2026-07-09</td></tr>
     <tr><td>适用范围</td><td>云端／服务端与本服务（Windows 打印客户端）之间的 MQTT 接口对接</td></tr>
     <tr><td>维护约定</td><td>本页与仓库根目录《接口文档.md》内容保持同步</td></tr>
   </table>
@@ -288,7 +288,7 @@
   </table>
   <p>每单消息序：<code>accepted →（waiting）→ done／failed</code>；受理失败时仅一条 <code>failed</code>。</p>
   <ul>
-    <li>处于「等待重试」的任务（打印机离线、打印口被占用）在终态前仅可能发布一条 <code>waiting</code>；等待期间被取消的任务不再发布。</li>
+    <li>处于「等待重试」的任务（打印机离线、打印口被占用）在终态前仅可能发布一条 <code>waiting</code>；等待期间被取消的任务不发布后续回执。</li>
     <li>在本服务界面执行「重新打印」的任务再次到达终态时重复发布（<code>jobNo</code> 相同）。</li>
     <li>本地操作（测试打印、打印样票）不上报。</li>
   </ul>
@@ -334,7 +334,7 @@
     <tr><td><code>printers[].conn</code></td><td><code>"network"</code>（网口）或 <code>"usb"</code></td></tr>
     <tr><td><code>printers[].ip</code>／<code>port</code></td><td>网口地址与端口（USB 时省略）</td></tr>
     <tr><td><code>printers[].usbName</code></td><td>USB 驱动名（网口时省略）</td></tr>
-    <tr><td><code>printers[].online</code>／<code>detail</code></td><td>该打印机是否在线与可读描述（检测方式与耗时等）</td></tr>
+    <tr><td><code>printers[].online</code>／<code>detail</code></td><td>该打印机是否在线与可读描述（检测方式、耗时或失败原因与已持续时长）。网口打印机连续检测失败持续满 30 秒判定为离线，任一次检测成功立即恢复在线；USB 打印机状态即时生效；程序启动后尚未完成首次判定的打印机报告为离线，<code>detail</code> 为 <code>检测中</code></td></tr>
     <tr><td><code>printers[].buzzer</code>／<code>cut</code>／<code>headLines</code>／<code>tailLines</code></td><td>每台参数当前值（云端下发覆盖后的持久化结果）。注：<code>tailLines</code> 为尾部走纸偏移量，本地属性页允许设置负值</td></tr>
     <tr><td><code>printers[].lastPrint</code></td><td>最近打印描述（展示用途，可省略）</td></tr>
   </table>
@@ -452,10 +452,11 @@
     <tr><td>v1.2</td><td>2026-07-08</td><td>上行消息合并为 <code>report</code>（打印回执）与 <code>state</code>（状态快照）两类；新增全局错误码（<code>code</code> 字段与第七章码表）；新增 <code>waiting</code> 卡单事件；<code>accepted</code> 回执携带打印机身份与本单参数</td></tr>
     <tr><td>v1.3</td><td>2026-07-08</td><td>USB 打印目标以打印机名称或 ID 指定（与状态快照上报对应）；<code>gateway</code> 仅承载网口地址；移除 <code>printer.usbName</code> 寻址与 <code>gateway:"usb"</code> 首台匹配；错误码 3003 改为「USB 目标非法」</td></tr>
     <tr><td>v1.4</td><td>2026-07-08</td><td><code>state</code> 状态快照改为定时上报（连接成功立即一次、此后每 1 分钟一次）；新增下行查询消息 <code>{"query":"printers"}</code> 按需拉取全量 <code>state</code>；移除状态变化即时上报；新增错误码 1002</td></tr>
+    <tr><td>v1.5</td><td>2026-07-09</td><td>网口打印机在线判定加入 30 秒离线确认（连续检测失败持续满 30 秒判定为离线，任一次检测成功立即恢复在线）；<code>printers[].detail</code> 的离线描述携带失败原因错误码与已持续时长；未完成首次判定的打印机报告为离线（<code>detail</code>＝<code>检测中</code>）</td></tr>
   </table>
 
   <footer>
-    聪明付票据打印服务器 接口文档 v1.4 · 本页由本服务内置只读文档服务提供，与仓库《接口文档.md》内容保持同步。
+    聪明付票据打印服务器 接口文档 v1.5 · 本页由本服务内置只读文档服务提供，与仓库《接口文档.md》内容保持同步。
   </footer>
 
 </div>

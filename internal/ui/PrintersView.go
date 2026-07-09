@@ -81,7 +81,7 @@ func (a *App) refreshPrinters() {
 		selID = p.ID
 	}
 	a.printerModel.items = a.filteredPrinters()
-	a.printerModel.PublishRowsReset()
+	publishTableRefresh(&a.printerModel.TableModelBase, len(a.printerModel.items))
 	a.updateStatusBar()
 	if selID != "" && a.printerTV != nil {
 		for i, p := range a.printerModel.items {
@@ -227,5 +227,7 @@ func (a *App) onDeletePrinter() {
 	a.save()
 	a.refreshPrinters()
 	a.syncMonitors() // 停掉被删打印机的监测
+	// 事件源已消失,恢复边沿永不再来:挂起的离线告警在此收尾,否则永久残留
+	a.alertResolve(alertPrinterOffline, p.ID)
 	a.flash("已删除「" + p.Name + "」")
 }

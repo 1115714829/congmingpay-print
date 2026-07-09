@@ -39,6 +39,17 @@ func statusInfoFor(st transport.PrinterStatus) statusInfo {
 	}
 }
 
+// publishTableRefresh 全量刷新 TableView 并强制重绘可见行。
+// 坑:walk 的 PublishRowsReset 底层 LVM_SETITEMCOUNT 带 LVSICF_NOINVALIDATEALL——
+// 行数不变时 listview 不重绘任何行(旧文本滞留屏幕,靠点击/遮挡才偶然刷新);
+// 必须补发 PublishRowsChanged(0,n-1) 走 LVM_REDRAWITEMS 强制重绘。勿裸调 PublishRowsReset。
+func publishTableRefresh(base *walk.TableModelBase, rowCount int) {
+	base.PublishRowsReset()
+	if rowCount > 0 {
+		base.PublishRowsChanged(0, rowCount-1)
+	}
+}
+
 // PrinterModel 是打印机列表的 TableView 模型。
 type PrinterModel struct {
 	walk.TableModelBase

@@ -147,6 +147,9 @@ func (c *Client) PublishState() {
 		}
 		if oi, ok := online[p.ID]; ok {
 			sp.Online, sp.Detail = oi.Online, oi.Detail
+		} else {
+			// 启动后首次判定尚未完成(监测未定态不写注册表):按离线报告,detail 标「检测中」
+			sp.Detail = "检测中"
 		}
 		printers = append(printers, sp)
 	}

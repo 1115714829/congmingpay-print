@@ -5,9 +5,11 @@
 # 生成的 Windows 资源(build.ps1 用 rsrc 重新生成)
 *.syso
 
-# 运行时产物(与 exe 同目录,机器相关)
+# 运行时产物(与 exe 同目录,机器相关;config.json.* 覆盖损坏备份与手工备份,含 MQTT 凭据不入库)
 /config.json
+/config.json.*
 *.log
+*~
 
 # 临时/测试产物
 *.smokebak
