@@ -11,12 +11,8 @@ import (
 
 // PRINTER_INFO_2 的 Status / Attributes 位(仅列用到的)。
 const (
-	printerStatusError        = 0x00000002
-	printerStatusPaperJam     = 0x00000008
-	printerStatusPaperOut     = 0x00000010
 	printerStatusOffline      = 0x00000080
 	printerStatusNotAvailable = 0x00001000
-	printerStatusDoorOpen     = 0x00400000
 	printerAttrWorkOffline    = 0x00000400
 )
 
@@ -53,9 +49,9 @@ type printerInfo2 struct {
 	AveragePPM         uint32
 }
 
-// QuerySpoolerStatus 经 Windows 打印后台(GetPrinter)查询已装打印机状态。
-// 注:普通 USB RAW 驱动多为单向,后台常只反映"离线/暂停/工作离线"等,
-// 缺纸/开盖等物理状态需驱动支持双向通信才会体现。
+// QuerySpoolerStatus 经 Windows 打印后台(GetPrinter)查询已装打印机的在线/离线。
+// 与网口一致仅提供在线/离线两态:程序转述打印后台的脱机标志
+// (PRINTER_STATUS_OFFLINE / NOT_AVAILABLE / WORK_OFFLINE)。
 func QuerySpoolerStatus(name string) (PrinterStatus, error) {
 	attrs, status, err := getPrinterStatus(name)
 	if err != nil {
@@ -64,16 +60,11 @@ func QuerySpoolerStatus(name string) (PrinterStatus, error) {
 	offline := status&printerStatusOffline != 0 ||
 		status&printerStatusNotAvailable != 0 ||
 		attrs&printerAttrWorkOffline != 0
-	s := PrinterStatus{
-		Reachable: true,
-		Online:    !offline,
-		PaperOut:  status&printerStatusPaperOut != 0,
-		CoverOpen: status&printerStatusDoorOpen != 0,
-		Error:     status&(printerStatusError|printerStatusPaperJam) != 0,
-	}
-	s.Detail = summarizeStatus(s)
-	if s.Online && status == 0 {
-		s.Detail += "(普通USB驱动可能仅反映后台状态,物理缺纸/开盖未必上报)"
+	s := PrinterStatus{Reachable: true, Online: !offline}
+	if offline {
+		s.Detail = "打印后台标记脱机"
+	} else {
+		s.Detail = "打印后台正常"
 	}
 	return s, nil
 }

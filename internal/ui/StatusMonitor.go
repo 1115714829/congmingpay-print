@@ -115,7 +115,7 @@ func (a *App) monitorLoop(snap model.Printer, stop <-chan struct{}) {
 		// ② 折算生效显示信息。
 		var info statusInfo
 		switch {
-		case eff == 1 && raw: // 正常在线(USB 就绪/缺纸/错误子状态照常)
+		case eff == 1 && raw: // 正常在线
 			info = statusInfoFor(st)
 			lastGood = info
 		case eff == 1: // 容错窗口:保持在线标签防闪烁,detail 记抖动进展

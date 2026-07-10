@@ -25,18 +25,12 @@ type statusInfo struct {
 	detail string // 传输层原始描述(如"在线(ping 5ms)"/"离线(超时)"),供日志
 }
 
-// statusInfoFor 把传输层状态映射为短标签 + 颜色(+ 原始描述)。
+// statusInfoFor 把传输层状态映射为短标签 + 颜色(+ 原始描述),统一只有 就绪/离线 两态。
 func statusInfoFor(st transport.PrinterStatus) statusInfo {
-	switch {
-	case !st.Reachable || !st.Online:
+	if !st.Reachable || !st.Online {
 		return statusInfo{"离线", colGray, st.Detail}
-	case st.PaperOut:
-		return statusInfo{"缺纸", colOrange, st.Detail}
-	case st.Error || st.CoverOpen:
-		return statusInfo{"错误", colRed, st.Detail}
-	default:
-		return statusInfo{"就绪", colGreen, st.Detail}
 	}
+	return statusInfo{"就绪", colGreen, st.Detail}
 }
 
 // publishTableRefresh 全量刷新 TableView 并强制重绘可见行。

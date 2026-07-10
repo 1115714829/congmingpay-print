@@ -27,7 +27,7 @@ var (
 const PingTimeout = 1 * time.Second
 
 // QueryICMPPing 用 ICMP ping 判在线/离线:ping 通=在线,超时/不可达=离线。
-// 只给在线/离线(读不到缺纸/开盖)。供高频后台巡检,且不碰 9100。
+// 只给在线/离线。供高频后台巡检,且不碰 9100。
 // RTTms 仅 ping 成功时有效,供监测丢包统计求均值。
 func QueryICMPPing(ip string) PrinterStatus {
 	ok, rtt, detail := icmpEcho(ip, PingTimeout)
