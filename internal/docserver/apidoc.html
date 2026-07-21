@@ -38,7 +38,7 @@
 <div class="wrap">
 
   <h1>聪明付票据打印服务器 · 接口文档</h1>
-  <p class="subtitle">云端／服务端与本服务之间的 MQTT 接口规范 · 文档版本 v1.5（2026-07-09）</p>
+  <p class="subtitle">云端／服务端与本服务之间的 MQTT 接口规范 · 文档版本 v1.6（2026-07-21）</p>
 
   <div class="notice">
     本页为只读接口文档。本服务不提供 HTTP 数据接口，数据通信全部经由 MQTT 完成。
@@ -65,8 +65,8 @@
   <table>
     <tr><th>项目</th><th>内容</th></tr>
     <tr><td>文档名称</td><td>聪明付票据打印服务器 接口文档</td></tr>
-    <tr><td>文档版本</td><td>v1.5</td></tr>
-    <tr><td>发布日期</td><td>2026-07-09</td></tr>
+    <tr><td>文档版本</td><td>v1.6</td></tr>
+    <tr><td>发布日期</td><td>2026-07-21</td></tr>
     <tr><td>适用范围</td><td>云端／服务端与本服务（Windows 打印客户端）之间的 MQTT 接口对接</td></tr>
     <tr><td>维护约定</td><td>本页与仓库根目录《接口文档.md》内容保持同步</td></tr>
   </table>
@@ -76,8 +76,8 @@
   <table>
     <tr><th>术语</th><th>说明</th></tr>
     <tr><td>本服务</td><td>聪明付票据打印服务器（Windows 端程序），MQTT 客户端角色</td></tr>
-    <tr><td>短商户号（merchant）</td><td>聪明付分配的商户标识，仅含字母、数字与下划线。用作下行订阅主题，并作为全部上行消息的来源标识字段</td></tr>
-    <tr><td>上报主题</td><td>本服务发布全部上行消息的 MQTT 主题，由本服务设置页配置（例如 <code>server</code>）</td></tr>
+    <tr><td>短商户号（merchant）</td><td>上行消息来源标识字段。自建通道：聪明付短商户号（仅字母数字下划线，同时为下行订阅主题与 ClientID）。阿里云通道：等于设置页「自定义 ID（商户号）」</td></tr>
+    <tr><td>上报主题</td><td>本服务发布全部上行消息的 MQTT 主题。自建通道：设置页手填完整主题；阿里云通道：<code>{父主题}/{自定义ID}/{上行后缀}</code></td></tr>
     <tr><td>打印机</td><td>本服务中登记的一台热敏小票打印机（网口或 USB）</td></tr>
     <tr><td>任务</td><td>一次打印请求经受理后生成的打印作业，以任务号（<code>jobNo</code>）标识</td></tr>
     <tr><td>打印回执（report）</td><td>上行消息之一：打印请求的受理与执行结果，<code>event</code> 字段区分阶段（受理／卡单／成功／失败）</td></tr>
@@ -95,6 +95,8 @@
 
   <h2 id="s3">三、通信通道</h2>
   <h3>3.1 连接参数</h3>
+  <p>本服务设置页以选项卡二选一：<strong>自建 MQTT</strong> 或 <strong>阿里云 MQTT</strong>（<code>provider</code>=<code>generic</code>／<code>aliyun</code>），同时只连接一种。</p>
+  <h4>3.1.1 自建 MQTT</h4>
   <table>
     <tr><th>参数</th><th>说明</th></tr>
     <tr><td>协议</td><td>MQTT 3.1.1，明文 TCP</td></tr>
@@ -106,7 +108,18 @@
     <tr><td>QoS</td><td>订阅与发布均为 QoS 1</td></tr>
     <tr><td>遗嘱（LWT）</td><td>主题＝上报主题，内容＝简版状态快照（服务离线，见 6.3）</td></tr>
   </table>
+  <h4>3.1.2 阿里云 MQTT（云消息队列 MQTT 版）</h4>
+  <table>
+    <tr><th>参数</th><th>说明</th></tr>
+    <tr><td>协议</td><td>MQTT 3.1.1，明文 TCP</td></tr>
+    <tr><td>阿里云 MQTT 地址／端口</td><td>设置页手填控制台接入点域名与端口（默认 <code>1883</code>）</td></tr>
+    <tr><td>鉴权</td><td><code>Username=Signature|{AccessKeyId}|{InstanceId}</code>，<code>Password=Base64(HMAC-SHA1(SecretKey, ClientID))</code></td></tr>
+    <tr><td>ClientID</td><td><code>{GroupId}@@@{自定义ID}</code></td></tr>
+    <tr><td>InstanceId／AccessKey／SecretKey／GroupId</td><td>设置页必填</td></tr>
+    <tr><td>KeepAlive／会话／QoS／LWT</td><td>与自建相同</td></tr>
+  </table>
   <h3>3.2 主题</h3>
+  <h4>3.2.1 自建 MQTT</h4>
   <table>
     <tr><th>方向</th><th>主题</th><th>内容</th></tr>
     <tr><td>下行（本服务订阅）</td><td><code>&lt;短商户号&gt;</code></td><td>打印消息：单个 JSON 对象或对象数组（见第四章）</td></tr>
@@ -114,6 +127,9 @@
   </table>
   <p>单主题一对多模型：服务端可仅使用一个上报主题（例如 <code>server</code>）接收全部客户端的上行消息，按消息内 <code>merchant</code> 字段区分来源；各客户端的下行订阅主题（短商户号）相互独立。</p>
   <p>上报主题约束：为完整发布主题，可包含 <code>/</code>；不得包含通配符 <code>+</code>、<code>#</code>；不得等于订阅主题（短商户号），否则上行消息将被本服务自身接收并形成消息循环。</p>
+  <h4>3.2.2 阿里云 MQTT（父主题 + 自定义 ID + 后缀）</h4>
+  <p>设置页填写父主题、自定义 ID、下行后缀、上行后缀，自动拼接为 <code>{父主题}/{自定义ID}/{下行后缀}</code> 与 <code>{父主题}/{自定义ID}/{上行后缀}</code>。示例：父主题=<code>server</code>，自定义 ID=<code>M100001</code>，下行=<code>cmd</code>，上行=<code>report</code> → 订阅 <code>server/M100001/cmd</code>，上报 <code>server/M100001/report</code>。</p>
+  <p>约束：父主题须为控制台已创建的一级 Topic；全路径长度 ≤ 64；不得含 <code>+</code>／<code>#</code>；订阅与上报不得相同。上行 <code>merchant</code>＝自定义 ID。</p>
   <h3>3.3 投递语义</h3>
   <ul>
     <li>上行发布为尽力送达：不排队、不补发。MQTT 未连接或发布失败时，消息丢弃，原因记录于本服务日志文件 <code>congmingpay.log</code>。</li>
@@ -179,7 +195,7 @@
   </table>
   <p>其他取值拒绝。两种类型均由本服务统一收尾：蜂鸣、重打标题、首部空行、尾部走纸与切纸由报文顶层字段控制，<code>contents</code> 内无需（也不应）包含走纸或切纸指令。</p>
   <h3>4.6 查询消息</h3>
-  <p>服务端向短商户号主题下发查询消息，按需拉取本服务的最新状态：</p>
+  <p>服务端向本服务的<strong>下行订阅主题</strong>下发查询消息，按需拉取本服务的最新状态：</p>
   <pre><code>{"query":"printers"}</code></pre>
   <ul>
     <li>查询消息为单个对象，顶层 <code>query</code> 为非空字符串；不支持放入数组。</li>
@@ -440,7 +456,8 @@
 
   <h2 id="s10">十、补充约定</h2>
   <ul>
-    <li>上报主题无默认值，须在本服务设置页配置；未配置时本服务不连接 MQTT，原因记录于日志。</li>
+    <li>自建通道：上报主题无默认值，须在设置页配置；未配置时本服务不连接 MQTT，原因记录于日志。</li>
+    <li>阿里云通道：须填写地址、InstanceId、AccessKey、SecretKey、GroupId、父主题、自定义 ID、下行／上行后缀；主题为 <code>{父主题}/{自定义ID}/{后缀}</code>。</li>
     <li>上行消息的 <code>type</code> 与字段名为本服务与服务端的约定，如需调整以双方协商结果为准。</li>
   </ul>
 
@@ -453,10 +470,11 @@
     <tr><td>v1.3</td><td>2026-07-08</td><td>USB 打印目标以打印机名称或 ID 指定（与状态快照上报对应）；<code>gateway</code> 仅承载网口地址；移除 <code>printer.usbName</code> 寻址与 <code>gateway:"usb"</code> 首台匹配；错误码 3003 改为「USB 目标非法」</td></tr>
     <tr><td>v1.4</td><td>2026-07-08</td><td><code>state</code> 状态快照改为定时上报（连接成功立即一次、此后每 1 分钟一次）；新增下行查询消息 <code>{"query":"printers"}</code> 按需拉取全量 <code>state</code>；移除状态变化即时上报；新增错误码 1002</td></tr>
     <tr><td>v1.5</td><td>2026-07-09</td><td>网口打印机在线判定加入 30 秒离线确认（连续检测失败持续满 30 秒判定为离线，任一次检测成功立即恢复在线）；<code>printers[].detail</code> 的离线描述携带失败原因错误码与已持续时长；未完成首次判定的打印机报告为离线（<code>detail</code>＝<code>检测中</code>）</td></tr>
+    <tr><td>v1.6</td><td>2026-07-21</td><td>新增阿里云云消息队列 MQTT 版通道：AK/SK 签名、<code>GroupId@@@自定义ID</code>；主题 <code>{父主题}/{自定义ID}/{上下行后缀}</code>；<code>merchant</code>＝自定义 ID</td></tr>
   </table>
 
   <footer>
-    聪明付票据打印服务器 接口文档 v1.5 · 本页由本服务内置只读文档服务提供，与仓库《接口文档.md》内容保持同步。
+    聪明付票据打印服务器 接口文档 v1.6 · 本页由本服务内置只读文档服务提供，与仓库《接口文档.md》内容保持同步。
   </footer>
 
 </div>

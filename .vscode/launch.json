@@ -1,0 +1,35 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch congmingpay (386)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "GOARCH": "386",
+        "CGO_ENABLED": "0"
+      },
+      "preLaunchTask": "embed-manifest",
+      "console": "internalConsole",
+      "showLog": true
+    },
+    {
+      "name": "Launch congmingpay (amd64)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "GOARCH": "amd64",
+        "CGO_ENABLED": "0"
+      },
+      "preLaunchTask": "embed-manifest",
+      "console": "internalConsole",
+      "showLog": true
+    }
+  ]
+}

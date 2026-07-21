@@ -70,12 +70,29 @@ type App struct {
 	setName       *walk.LineEdit
 	notifyEnabled *walk.CheckBox
 	mqttEnabled   *walk.CheckBox
-	mqttBroker    *walk.LineEdit
-	mqttPort      *walk.LineEdit
-	mqttUser      *walk.LineEdit
-	mqttPass      *walk.LineEdit
-	mqttTopic     *walk.LineEdit
-	mqttReport    *walk.LineEdit // 上报(发布)主题,启用 MQTT 时必填
+	mqttTabs      *walk.TabWidget
+	mqttAliyunTab int // 创建后切到阿里云 Tab(1)或自建(0)
+	// 自建
+	mqttBroker *walk.LineEdit
+	mqttPort   *walk.LineEdit
+	mqttUser   *walk.LineEdit
+	mqttPass   *walk.LineEdit
+	mqttTopic  *walk.LineEdit
+	mqttReport *walk.LineEdit
+	// 阿里云云消息队列 MQTT 版
+	aliEndpoint   *walk.LineEdit
+	aliPort       *walk.LineEdit
+	aliInstance   *walk.LineEdit
+	aliAccessKey  *walk.LineEdit
+	aliSecretKey  *walk.LineEdit
+	aliGroupId    *walk.LineEdit
+	aliParent     *walk.LineEdit
+	aliDeviceId   *walk.LineEdit
+	aliDownSuffix *walk.LineEdit
+	aliUpSuffix   *walk.LineEdit
+	aliPreviewSub *walk.Label
+	aliPreviewRep *walk.Label
+	aliPreviewCID *walk.Label
 	mqttStatus    *walk.Label
 	docEnabled    *walk.CheckBox
 	docPort       *walk.LineEdit
@@ -110,8 +127,8 @@ func (a *App) Run() error {
 	if err := (MainWindow{
 		AssignTo: &a.mw,
 		Title:    a.windowTitle(),
-		MinSize:  Size{Width: 900, Height: 560},
-		Size:     Size{Width: 1000, Height: 640},
+		MinSize:  Size{Width: 900, Height: 620},
+		Size:     Size{Width: 1000, Height: 720},
 		Layout:   VBox{MarginsZero: true, SpacingZero: true},
 		Children: []Widget{
 			Composite{
@@ -142,6 +159,9 @@ func (a *App) Run() error {
 		},
 	}).Create(); err != nil {
 		return err
+	}
+	if a.mqttTabs != nil && a.mqttAliyunTab > 0 {
+		_ = a.mqttTabs.SetCurrentIndex(a.mqttAliyunTab)
 	}
 
 	if icon != nil {

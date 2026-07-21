@@ -1,10 +1,7 @@
 // Package mqtt 是云端通道:MQTT 3.1.1 客户端。
 //
-// 订阅「聪明付短商户号」主题收打印消息与查询消息(复用 api.ParseRequests/Process),
-// 向配置的「上报主题」发布两类上行:report(打印回执,accepted/waiting/done/failed)
-// 与 state(服务在线+全部打印机状态快照;**定时上报**——连接成功立即一条、此后每
-// stateInterval 一条,另可由下行 {"query":"printers"} 按需拉取;离线经 LWT 发简版)。
-// 明文连接、用户名/密码鉴权。
+// 支持自建(用户名密码)与阿里云(签名鉴权 + 主题模板)二选一(model.MQTT.Provider)。
+// 订阅 Resolve 产出的主题收打印/查询,向上报主题发 report/state(定时 state + LWT 离线)。
 package mqtt
 
 import (
@@ -30,22 +27,23 @@ import (
 var stateInterval = time.Minute
 
 // Client 是云端 MQTT 客户端(唯一云端通道)。
-// ClientID 直接使用短商户号:同商户号多客户端的重复问题由云端从根源杜绝,程序不做防重复处理。
+// ClientID/订阅/上报主题均来自 Resolve(自建=短商户号;阿里云=Group@@@Device + 模板展开)。
 type Client struct {
 	cfg     *config.Config
 	svc     *printsvc.Service
 	cfgPath string
 
-	mu          sync.Mutex
-	cli         pmqtt.Client
-	merchant    string // 当前订阅的短商户号(已净化)
-	reportTopic string // 当前上报(发布)主题(配置 Settings.MQTT.ReportTopic)
-	enabled     bool   // 当前配置是否启用 MQTT(供 publish 决定未发送时是否落错误日志)
-	connected   bool
-	lastErr     string
-	onChange    func()
-	onStatus    func()        // 连接状态变化回调(UI 刷新状态标签用)
-	stopTick    chan struct{} // 定时 state 上报 goroutine 的停止信号(随连接生命周期)
+	mu             sync.Mutex
+	cli            pmqtt.Client
+	merchant       string // 上行 JSON merchant(自建=短商户号;阿里云=DeviceId)
+	subscribeTopic string // 实际订阅主题
+	reportTopic    string // 实际上报(发布)主题
+	enabled        bool   // 当前配置是否启用 MQTT(供 publish 决定未发送时是否落错误日志)
+	connected      bool
+	lastErr        string
+	onChange       func()
+	onStatus       func()        // 连接状态变化回调(UI 刷新状态标签用)
+	stopTick       chan struct{} // 定时 state 上报 goroutine 的停止信号(随连接生命周期)
 }
 
 // New 创建客户端(未连接;由 Start 按配置连接)。
@@ -118,38 +116,33 @@ func (c *Client) reconnect(m model.MQTT) {
 		close(c.stopTick)
 		c.stopTick = nil
 	}
-	merchant := SanitizeMerchant(m.Topic)
-	report := strings.TrimSpace(m.ReportTopic)
-	c.merchant = merchant
-	c.reportTopic = report
 	c.enabled = m.Enabled
 	c.lastErr = ""
-	// 上报主题与 broker/短商户号同级必要:没有它,回执/结果/状态全部无处可发,不连接。
-	if !m.Enabled || strings.TrimSpace(m.Broker) == "" || merchant == "" || report == "" {
+	c.merchant = ""
+	c.subscribeTopic = ""
+	c.reportTopic = ""
+
+	p, ok, err := Resolve(m)
+	if err != nil {
 		c.mu.Unlock()
-		logger.Info("MQTT 未启用或 broker/短商户号/上报主题 为空,不连接")
+		logger.Errorf("MQTT 配置无效,不连接: %v", err)
 		return
 	}
-	// 自订阅回环守卫:上报主题若等于订阅主题(短商户号),ack 会被自己收到→解析失败→再发失败 ack,
-	// 形成无限消息风暴。设置页已拦截,此处兜底手改配置文件的情况。
-	if report == merchant {
+	if !ok {
 		c.mu.Unlock()
-		logger.Errorf("MQTT 上报主题(%s)不能与订阅主题(短商户号)相同——会造成自订阅回环,不连接", report)
+		logger.Info("MQTT 未启用或必填参数为空,不连接")
 		return
 	}
-	// 发布主题不得含通配符(设置页已挡,此处兜底手改配置):+/# 会致 broker 拒绝或断连循环。
-	if strings.ContainsAny(report, "+#") {
-		c.mu.Unlock()
-		logger.Errorf("MQTT 上报主题(%s)含通配符 +/#,非法发布主题,不连接", report)
-		return
-	}
-	cli := pmqtt.NewClient(c.buildOpts(m, merchant))
+	c.merchant = p.Merchant
+	c.subscribeTopic = p.SubscribeTopic
+	c.reportTopic = p.ReportTopic
+	cli := pmqtt.NewClient(c.buildOpts(p))
 	c.cli = cli
 	c.stopTick = make(chan struct{})
 	go c.stateLoop(c.stopTick) // 定时 state 上报,随本次连接生命周期
 	c.mu.Unlock()
 
-	logger.Infof("MQTT 连接 %s(短商户号/ClientID %s)…", brokerURL(m.Broker, m.Port), merchant)
+	logger.Infof("MQTT 连接 %s(ClientID %s · 订阅 %s)…", p.BrokerURL, p.ClientID, p.SubscribeTopic)
 	tok := cli.Connect()
 	go func() {
 		tok.Wait()
@@ -160,17 +153,18 @@ func (c *Client) reconnect(m model.MQTT) {
 	}()
 }
 
-func (c *Client) buildOpts(m model.MQTT, merchant string) *pmqtt.ClientOptions {
+func (c *Client) buildOpts(p ConnParams) *pmqtt.ClientOptions {
 	// 遗嘱为连接时固化的静态内容:简版 state(仅服务离线,不含打印机数组)。
-	will, _ := json.Marshal(stateMsg{Type: "state", Merchant: merchant, Online: false})
+	will, _ := json.Marshal(stateMsg{Type: "state", Merchant: p.Merchant, Online: false})
+	subTopic := p.SubscribeTopic
 	opts := pmqtt.NewClientOptions()
-	opts.AddBroker(brokerURL(m.Broker, m.Port))
-	opts.SetClientID(merchant) // ClientID=短商户号(同商户号重复由云端根源杜绝)
-	if m.Username != "" {
-		opts.SetUsername(m.Username)
+	opts.AddBroker(p.BrokerURL)
+	opts.SetClientID(p.ClientID)
+	if p.Username != "" {
+		opts.SetUsername(p.Username)
 	}
-	if m.Password != "" {
-		opts.SetPassword(m.Password)
+	if p.Password != "" {
+		opts.SetPassword(p.Password)
 	}
 	opts.SetKeepAlive(60 * time.Second)
 	opts.SetCleanSession(true)
@@ -178,15 +172,15 @@ func (c *Client) buildOpts(m model.MQTT, merchant string) *pmqtt.ClientOptions {
 	opts.SetConnectRetry(true)  // 首次连不上也后台重试
 	opts.SetConnectRetryInterval(5 * time.Second)
 	opts.SetMaxReconnectInterval(30 * time.Second)
-	opts.SetWill(strings.TrimSpace(m.ReportTopic), string(will), 1, false) // 遗嘱:异常断开时 broker 代发离线(发到配置的上报主题)
+	opts.SetWill(p.ReportTopic, string(will), 1, false) // 遗嘱发到上报主题
 	opts.SetOnConnectHandler(func(cli pmqtt.Client) {
 		c.setConnected(true)
 		// 订阅与上线 publish 放后台 goroutine:t.Wait() 会阻塞 paho 回调线程,别卡在这里。
 		go func() {
-			if t := cli.Subscribe(merchant, 1, c.onPrint); t.Wait() && t.Error() != nil {
-				logger.Errorf("MQTT 订阅 %s 失败: %v", merchant, t.Error())
+			if t := cli.Subscribe(subTopic, 1, c.onPrint); t.Wait() && t.Error() != nil {
+				logger.Errorf("MQTT 订阅 %s 失败: %v", subTopic, t.Error())
 			} else {
-				logger.Infof("MQTT 已连接·订阅 %s", merchant)
+				logger.Infof("MQTT 已连接·订阅 %s", subTopic)
 			}
 			c.PublishState() // 上线首拍(定时流起点):一条 state 全量(服务在线 + 全部打印机配置与在线态)
 		}()
@@ -369,21 +363,25 @@ func (c *Client) publish(cli pmqtt.Client, v interface{}) {
 
 // TestConnect 一次性连接+断开,供设置页「连接测试」。返回耗时与错误。
 func TestConnect(m model.MQTT) (time.Duration, error) {
-	merchant := SanitizeMerchant(m.Topic)
-	if strings.TrimSpace(m.Broker) == "" {
-		return 0, fmt.Errorf("Broker 为空")
+	m.Enabled = true // 测试时视为启用,便于 Resolve
+	p, ok, err := Resolve(m)
+	if err != nil {
+		return 0, err
 	}
-	if merchant == "" {
-		return 0, fmt.Errorf("短商户号为空")
+	if !ok {
+		if m.EffectiveProvider() == model.MQTTProviderAliyun {
+			return 0, fmt.Errorf("阿里云参数不完整(地址/端口/InstanceId/AK/SK/GroupId/父主题/自定义ID/上下行后缀)")
+		}
+		return 0, fmt.Errorf("Broker/短商户号/上报主题 不完整")
 	}
 	opts := pmqtt.NewClientOptions()
-	opts.AddBroker(brokerURL(m.Broker, m.Port))
-	opts.SetClientID(merchant) // 与主连接同为短商户号;主连接在线时测试会短暂替换连接,主连接自动重连恢复
-	if m.Username != "" {
-		opts.SetUsername(m.Username)
+	opts.AddBroker(p.BrokerURL)
+	opts.SetClientID(p.ClientID)
+	if p.Username != "" {
+		opts.SetUsername(p.Username)
 	}
-	if m.Password != "" {
-		opts.SetPassword(m.Password)
+	if p.Password != "" {
+		opts.SetPassword(p.Password)
 	}
 	opts.SetConnectTimeout(8 * time.Second)
 	cli := pmqtt.NewClient(opts)
@@ -408,7 +406,7 @@ func (c *Client) Status() (bool, string) {
 	case c.cli == nil:
 		return false, "未启用"
 	case c.connected:
-		return true, "已连接 · 订阅 " + c.merchant
+		return true, "已连接 · 订阅 " + c.subscribeTopic
 	case c.lastErr != "":
 		return false, "未连接 · " + c.lastErr
 	default:
