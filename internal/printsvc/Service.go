@@ -22,11 +22,19 @@ const (
 	occBackoffCap   = 3 * time.Second  // 占用短退避上限
 	offBackoffStart = 5 * time.Second  // 离线退避起点
 	offBackoffCap   = 30 * time.Second // 离线退避上限
+	persistDebounce = 400 * time.Millisecond
 )
 
 // longWaitWarn:连续被拒超此时长 → 任务行/日志可见告警 + 上报 waiting 事件(每个被拒流一次),但不自动失败。
 // 变量而非常量:仅供测试临时调小以验证告警路径。
 var longWaitWarn = 20 * time.Second
+
+// 内容类型(预览用):与协议 type 对齐;未知=-1(旧任务/本地 ESC 测试页)。
+const (
+	ContentUnknown = -1
+	ContentJSON    = 0 // JSON 排版(含云盒 type=5 归一)
+	ContentESC     = 1 // 原始 ESC base64
+)
 
 // Options 是打印任务的可选覆盖参数(nil 字段=用打印机默认)。
 type Options struct {
@@ -36,20 +44,27 @@ type Options struct {
 	HeadLines *int
 	TailLines *int
 	CloudID   *uint32 // 云端消息 id(随任务走,终态事件回携);nil=本地任务
+	// 预览源(可选):ContentType 缺省=Unknown;SourceJSON 仅 JSON 排版时拷贝 contents。
+	ContentType *int
+	SourceJSON  []byte
 }
 
 // entry 是一个任务的内部记录,附带打印机快照、数据与生效参数。
 type entry struct {
-	job     *model.Job
-	printer model.Printer
-	data    []byte
-	cloudID *uint32 // 云端消息 id(终态事件回携);nil=本地任务
+	job       *model.Job
+	printer   model.Printer
+	data      []byte
+	cloudID   *uint32 // 云端消息 id(终态事件回携);nil=本地任务
+	createdAt time.Time
 
 	// 生效参数(提交时按覆盖/默认解析)
 	cut       bool
 	buzzer    bool
 	headLines int
 	tailLines int
+
+	contentType int    // ContentJSON/ContentESC/ContentUnknown
+	sourceJSON  []byte // JSON 排版源(预览用);ESC/未知为空
 
 	reprintNext bool          // 下次派发是否显示"重打"抬头(消息 reprint:1 或手动「重新打印」)
 	cancelled   bool          // 已取消:休眠中的等待重试醒来即停
@@ -59,7 +74,7 @@ type entry struct {
 	gated          bool      // 是否已做过首次"判在线"预检(仅首次门控;重试一律直接真打为最终裁决)
 	firstRefusedAt time.Time // 连续被拒(占用/端口未就绪)流的起点;零值=当前不在被拒流。用于长期可见告警
 	warned         bool      // 长期被拒告警是否已落日志(节流,只记一次)
-	gen            int       // 派发代次:Retry 自增以作废仍在跑的旧派发 goroutine(旧 goroutine 检查点发现代次不符即退出,杜绝重复打印)
+	gen            int       // 派发代次:Retry 自增以作废仍在跑的旧派发 goroutine
 }
 
 // Service 是并发打印调度器。
@@ -68,14 +83,16 @@ type Service struct {
 	entries    []*entry
 	nextNo     int
 	notify     func()
-	onJobEvent func(JobEvent) // 任务事件(终态/卡单)回调,见 Events.go
+	onJobEvent func(JobEvent)
 
-	// 打印机在线检测结果注册表(UI 监测写、MQTT state 上行读),见 Events.go
+	store        *Store
+	historyDays  int
+	persistTimer *time.Timer
+	dirty        map[int]struct{}
+
 	onlineMu sync.RWMutex
 	online   map[string]OnlineInfo
 
-	// 每台打印机一把打印串行锁(printerID → *sync.Mutex):本进程对同一台同时只开一个 9100 连接,
-	// pCopy 多份/并发任务串行打印,彼此不自撞 RST;不同打印机仍并行。仅在真打(transport.Print)那步持锁。
 	printLocks sync.Map
 }
 
@@ -85,9 +102,21 @@ func (s *Service) printerLock(id string) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
-// New 创建打印服务。
+// New 创建打印服务(无持久化)。发布路径请用 NewWithStore。
 func New() *Service {
-	return &Service{nextNo: 1000, online: map[string]OnlineInfo{}}
+	return &Service{
+		nextNo: 1000, online: map[string]OnlineInfo{},
+		historyDays: model.DefaultJobHistoryDays,
+		dirty:       map[int]struct{}{},
+	}
+}
+
+// NewWithStore 创建带 SQLite 持久化的打印服务。store 可为 nil。
+func NewWithStore(store *Store, historyDays int) *Service {
+	s := New()
+	s.store = store
+	s.historyDays = model.ClampJobHistoryDays(historyDays)
+	return s
 }
 
 // SetNotify 设置任务变化回调(UI 用它刷新界面)。
@@ -124,7 +153,7 @@ func (s *Service) ActiveCount() int {
 
 // Submit 新建打印任务并在后台并发执行,立即返回任务号。opts 为可选覆盖参数(nil=用打印机默认)。
 func (s *Service) Submit(p *model.Printer, doc string, data []byte, opts *Options) int {
-	e := &entry{printer: *p, data: data, wake: make(chan struct{}, 1)}
+	e := &entry{printer: *p, data: data, wake: make(chan struct{}, 1), contentType: ContentUnknown}
 	// 生效参数 = 覆盖?覆盖:打印机默认
 	e.cut = p.Cuts()
 	e.buzzer = p.BuzzerEnabled
@@ -147,18 +176,28 @@ func (s *Service) Submit(p *model.Printer, doc string, data []byte, opts *Option
 			e.tailLines = *opts.TailLines
 		}
 		e.cloudID = opts.CloudID
+		if opts.ContentType != nil {
+			e.contentType = *opts.ContentType
+		}
+		if len(opts.SourceJSON) > 0 {
+			e.sourceJSON = append([]byte(nil), opts.SourceJSON...)
+		}
 	}
 
 	s.mu.Lock()
 	s.nextNo++
+	now := time.Now()
+	e.createdAt = now
 	e.job = &model.Job{
 		No: s.nextNo, Doc: doc, Printer: p.Name,
-		Status: model.JobQueued, Time: time.Now().Format("15:04:05"),
+		Status: model.JobQueued, Time: now.Format("15:04:05"),
 	}
 	jobNo := e.job.No
 	s.entries = append([]*entry{e}, s.entries...)
+	s.markDirtyLocked(jobNo)
 	s.mu.Unlock()
 	s.fireNotify()
+	s.schedulePersist()
 
 	logger.Infof("任务 #%d 提交 → %s %s (蜂鸣:%s 切刀:%s 重打抬头:%s)",
 		jobNo, p.BrandLabel(), p.Target(), onOff(e.buzzer), onOff(e.cut), onOff(e.reprintNext))
@@ -392,8 +431,10 @@ func (s *Service) Retry(no int) bool {
 	case e.wake <- struct{}{}:
 	default:
 	}
+	s.markDirtyLocked(no)
 	s.mu.Unlock()
 	s.fireNotify()
+	s.schedulePersist()
 	go s.dispatch(e)
 	return true
 }
@@ -401,21 +442,25 @@ func (s *Service) Retry(no int) bool {
 // Cancel 移除指定任务(进行中的作业已发送则无法真正撤回,仅从列表移除)。
 func (s *Service) Cancel(no int) bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	found := false
 	for i, e := range s.entries {
 		if e.job.No == no {
-			e.cancelled = true // 让休眠中的等待重试 goroutine 醒来即停
-			// 立即唤醒可能在退避休眠的 goroutine,让它马上复查并退出(不必干等最长 30s 退避)。
+			e.cancelled = true
 			select {
 			case e.wake <- struct{}{}:
 			default:
 			}
 			s.entries = append(s.entries[:i], s.entries[i+1:]...)
+			found = true
 			s.fireNotifyLocked()
-			return true
+			break
 		}
 	}
-	return false
+	s.mu.Unlock()
+	if found && s.store != nil {
+		persistErr("delete", s.store.DeleteJob(no))
+	}
+	return found
 }
 
 // ClearDone 清除所有已完成任务。
@@ -429,6 +474,9 @@ func (s *Service) ClearDone() {
 	}
 	s.entries = kept
 	s.mu.Unlock()
+	if s.store != nil {
+		persistErr("clear-done", s.store.DeleteDone())
+	}
 	s.fireNotify()
 }
 
@@ -453,6 +501,7 @@ func (s *Service) setStatus(e *entry, st model.JobStatus, errMsg string, code in
 	s.mu.Lock()
 	e.job.Status = st
 	e.job.Err = errMsg
+	s.markDirtyLocked(e.job.No)
 	var ev *JobEvent
 	if st == model.JobDone || st == model.JobFailed {
 		event := EventDone
@@ -464,7 +513,14 @@ func (s *Service) setStatus(e *entry, st model.JobStatus, errMsg string, code in
 			Printer: e.printer, Err: errMsg,
 		}
 	}
+	// 终态立即落盘,降低崩溃丢单风险
+	immediate := st == model.JobDone || st == model.JobFailed
 	s.mu.Unlock()
+	if immediate {
+		s.flushPersist()
+	} else {
+		s.schedulePersist()
+	}
 	s.fireNotify()
 	if ev != nil {
 		s.fireJobEvent(*ev)

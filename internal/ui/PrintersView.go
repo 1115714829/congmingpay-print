@@ -8,6 +8,7 @@ import (
 	"congmingpay/internal/layout"
 	"congmingpay/internal/logger"
 	"congmingpay/internal/model"
+	"congmingpay/internal/printsvc"
 
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
@@ -53,13 +54,14 @@ func (a *App) printersPageWidget() Composite {
 				StyleCell:       a.printerModel.StyleCell,
 				OnItemActivated: a.onProperties,
 				Columns: []TableViewColumn{
-					{Title: "名称", Width: 150},
-					{Title: "品牌", Width: 70},
-					{Title: "规格", Width: 60},
-					{Title: "连接", Width: 60},
-					{Title: "地址 / 设备", Width: 160},
-					{Title: "状态", Width: 80},
-					{Title: "最近活动", Width: 100},
+					{Title: "名称", Width: 140},
+					{Title: "来源", Width: 70},
+					{Title: "品牌", Width: 60},
+					{Title: "规格", Width: 55},
+					{Title: "连接", Width: 50},
+					{Title: "地址 / 设备", Width: 140},
+					{Title: "状态", Width: 70},
+					{Title: "上次打印时间", Width: 130},
 				},
 			},
 		},
@@ -175,8 +177,6 @@ func (a *App) testPrinter(p *model.Printer) {
 		return
 	}
 	a.svc.Submit(p, "测试页", data, nil)
-	p.LastPrint = "刚刚"
-	a.save()
 	a.refreshPrinters()
 	a.flash("已向「" + p.Name + "」发送测试页(见打印队列)")
 }
@@ -188,14 +188,16 @@ func (a *App) onSampleLayout() {
 		a.warn("打印样票", "请先在列表中选择一台打印机。")
 		return
 	}
-	data, err := layout.Render(layout.SampleContents, p.Width)
+	data, _, err := layout.Render(layout.SampleContents, p.Width, a.cfg.Settings.YunheCompat())
 	if err != nil {
 		a.warn("打印样票", "生成样票失败: "+err.Error())
 		return
 	}
-	a.svc.Submit(p, "排版样票", data, nil)
-	p.LastPrint = "刚刚"
-	a.save()
+	ct := printsvc.ContentJSON
+	a.svc.Submit(p, "排版样票", data, &printsvc.Options{
+		ContentType: &ct,
+		SourceJSON:  append([]byte(nil), layout.SampleContents...),
+	})
 	a.refreshPrinters()
 	a.flash("已向「" + p.Name + "」发送排版样票")
 }

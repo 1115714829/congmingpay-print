@@ -26,9 +26,9 @@ type ConnParams struct {
 
 // JoinParentTopic 拼接 父主题/自定义ID/后缀。
 func JoinParentTopic(parent, deviceID, suffix string) (string, error) {
-	p := strings.TrimSpace(parent)
-	id := strings.TrimSpace(deviceID)
-	suf := strings.TrimSpace(suffix)
+	p := strings.Trim(strings.TrimSpace(parent), "/")
+	id := strings.Trim(strings.TrimSpace(deviceID), "/")
+	suf := strings.Trim(strings.TrimSpace(suffix), "/")
 	if p == "" {
 		return "", fmt.Errorf("父主题未填写")
 	}
@@ -41,10 +41,6 @@ func JoinParentTopic(parent, deviceID, suffix string) (string, error) {
 	if strings.ContainsAny(p+id+suf, "+#") {
 		return "", fmt.Errorf("主题段含通配符 +/#")
 	}
-	// 去掉各段首尾多余 /
-	p = strings.Trim(p, "/")
-	id = strings.Trim(id, "/")
-	suf = strings.Trim(suf, "/")
 	topic := p + "/" + id + "/" + suf
 	if len(topic) > aliyunTopicMaxLen {
 		return "", fmt.Errorf("主题长度 %d 超过阿里云上限 %d", len(topic), aliyunTopicMaxLen)
@@ -67,6 +63,8 @@ func Resolve(m model.MQTT) (p ConnParams, ok bool, err error) {
 	switch m.EffectiveProvider() {
 	case model.MQTTProviderAliyun:
 		return resolveAliyun(m.Aliyun)
+	case model.MQTTProviderIot:
+		return resolveIot(m.Iot)
 	default:
 		return resolveGeneric(m)
 	}
@@ -75,6 +73,8 @@ func Resolve(m model.MQTT) (p ConnParams, ok bool, err error) {
 func resolveGeneric(m model.MQTT) (ConnParams, bool, error) {
 	merchant := SanitizeMerchant(m.Topic)
 	report := strings.TrimSpace(m.ReportTopic)
+	user := strings.TrimSpace(m.Username)
+	pass := strings.TrimSpace(m.Password)
 	if strings.TrimSpace(m.Broker) == "" || merchant == "" || report == "" {
 		return ConnParams{}, false, nil
 	}
@@ -86,8 +86,8 @@ func resolveGeneric(m model.MQTT) (ConnParams, bool, error) {
 	}
 	return ConnParams{
 		BrokerURL:      brokerURL(m.Broker, m.Port),
-		Username:       m.Username,
-		Password:       m.Password,
+		Username:       user,
+		Password:       pass,
 		ClientID:       merchant,
 		SubscribeTopic: merchant,
 		ReportTopic:    report,
@@ -99,13 +99,13 @@ func resolveAliyun(a model.AliyunMQTT) (ConnParams, bool, error) {
 	endpoint := strings.TrimSpace(a.Endpoint)
 	instanceID := strings.TrimSpace(a.InstanceId)
 	accessKey := strings.TrimSpace(a.AccessKey)
-	secretKey := a.SecretKey
+	secretKey := strings.TrimSpace(a.SecretKey)
 	groupID := strings.TrimSpace(a.GroupId)
 	parent := strings.TrimSpace(a.ParentTopic)
 	deviceID := strings.TrimSpace(a.DeviceId)
 	down := strings.TrimSpace(a.DownSuffix)
 	up := strings.TrimSpace(a.UpSuffix)
-	if endpoint == "" || instanceID == "" || accessKey == "" || strings.TrimSpace(secretKey) == "" ||
+	if endpoint == "" || instanceID == "" || accessKey == "" || secretKey == "" ||
 		groupID == "" || parent == "" || deviceID == "" || down == "" || up == "" {
 		return ConnParams{}, false, nil
 	}

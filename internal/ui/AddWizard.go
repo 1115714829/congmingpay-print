@@ -176,9 +176,9 @@ func (a *App) runAddWizard() *model.Printer {
 		Brand:         model.BrandForIndex(outBrandIdx),
 		Width:         form.width,
 		Conn:          form.conn,
+		Source:        model.SourceLocal,
 		BuzzerEnabled: outBuzzer,
 		CutDisabled:   !outCut,
-		LastPrint:     "刚刚添加",
 	}
 	if form.conn == model.ConnNetwork {
 		p.IP = outIP

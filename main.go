@@ -77,7 +77,10 @@ func main() {
 		logger.Infof("已加载打印机: [id=%s] 名称『%s』品牌『%s』规格 %s 目标 %s", p.ID, p.Name, p.BrandLabel(), p.WidthLabel(), p.Target())
 	}
 
-	svc := printsvc.New()
+	svcStore := printsvc.OpenStoreOrRecover(printsvc.DefaultJobsPath())
+	svc := printsvc.NewWithStore(svcStore, cfg.Settings.JobHistoryDays)
+	defer svc.CloseStore()
+	svc.RestoreAndResume()
 	// 云端唯一通道:MQTT。UI 在 Run 里给它注册打印机列表刷新回调,并在设置保存时 Reload。
 	mc := mqtt.New(cfg, svc, cfgPath)
 	// 仅局域网、只读的在线接口文档服务(不参与数据通信)。UI 在设置保存时 Reload。

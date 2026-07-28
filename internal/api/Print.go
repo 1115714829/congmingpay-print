@@ -55,97 +55,64 @@ func (p PrinterRef) Empty() bool {
 	return p.Name == "" && p.ID == "" && p.IP == ""
 }
 
-// PrintRequest 打印请求体。buzzer/cut/reprint/headLines/tailLines 为**必填字段**(缺一即拒,无降级)。
+// PrintRequest 打印请求体。
 //
-// 目标二选一:printer(名称/ID 字符串,或 {name,ip,brand,width} 对象)或 gateway(网口 IP)。
-// USB 打印机以 printer 指定名称或 ID(与状态快照上报的 printer/printerId 对应)。
-// 目标未注册且带了 IP(printer.ip 或 gateway)→ **自动登记入库**(随打印建列表)再打印。
-// MQTT 打印消息的 payload 可为单个对象(打一台)或对象数组(一次打多台,并发执行)。
+// 云盒兼容模式(Settings.YunheCompat)开启时:type=5≡0;五参数可省略;contents 可含 cut。
+// 关闭时:仅 type 0/1;五参数必填;拒 contents cut。
 //
-// 用例(gateway 指定网口 IP,单台):
-//
-//	{
-//	  "gateway": "192.168.0.89",
-//	  "id": 1295873547,
-//	  "type": 0,
-//	  "pWidth": 80,
-//	  "pCopy": 1,
-//	  "buzzer": 0, "cut": 1, "reprint": 0, "headLines": 0, "tailLines": 0,
-//	  "contents": [
-//	    {"cont":"收款小票","type":"title"},
-//	    {"both_sides":["金额","99.00"]},
-//	    {"cont":"https://congmingpay","type":"qrcode","align":"center"}
-//	  ]
-//	}
-//
-// 用例(printer 对象,未注册则自动登记):
-//
-//	{"printer":{"name":"飞蛾1","ip":"192.168.68.128","brand":"飞蛾","width":80},"type":0,"pWidth":80,
-//	 "buzzer":0,"cut":1,"reprint":0,"headLines":0,"tailLines":0,"contents":[...]}
-//
-// 用例(多台,数组):[{"printer":{...},...必填字段...}, {"printer":{...},...}]
+// 目标二选一:printer 或 gateway。MQTT payload 可为单对象或数组。
 type PrintRequest struct {
-	// 打印目标(与 gateway 二选一):字符串=打印机名/ID(网口/USB 通用);对象={name,ip,brand,width},未注册则自动登记入库。
 	Printer PrinterRef `json:"printer"`
-	// 打印目标网关(与 printer 二选一):网口 IP(如 "192.168.0.89",未注册则按 IP 自动登记入库)。USB 打印以 printer 指定名称。
-	Gateway string `json:"gateway"`
-	// 任务 ID:仅用于回执与日志对应,不用于去重(每条消息都会处理并打印)。
-	ID uint32 `json:"id"`
-	// 排版类型(默认 0):0=JSON 排版(contents 为排版元素数组,由服务端渲染);1=原始 ESC/POS(contents 为 base64 字符串,解码后直接下发)。
-	Type int `json:"type"`
-	// 纸宽 mm:58 或 80(可选,默认按打印机设置)。
-	PWidth int `json:"pWidth"`
-	// 份数(可选,默认 1)。
-	PCopy int `json:"pCopy"`
-	// 打印内容:type=0 为排版元素数组;type=1 为 base64 字符串(原始 ESC/POS)。切纸/走纸由顶层 cut、tailLines 统一处理,contents 内不接受切纸指令。
-	Contents json.RawMessage `json:"contents"`
-	// 蜂鸣:0=关 1=开(必填)。
-	Buzzer *int `json:"buzzer"`
-	// 切刀:0=关 1=开(必填)。
-	Cut *int `json:"cut"`
-	// 重打:0=普通,1=带醒目「重打」抬头(必填)。
-	Reprint *int `json:"reprint"`
-	// 首部空行:0=默认(必填)。
-	HeadLines *int `json:"headLines"`
-	// 尾部空行:0=默认(必填)。
-	TailLines *int `json:"tailLines"`
+	Gateway string     `json:"gateway"`
+	ID      uint32     `json:"id"`
+	// 0=JSON 排版;1=ESC base64;云盒兼容下 5≡0。
+	Type      int             `json:"type"`
+	PWidth    int             `json:"pWidth"`
+	PCopy     int             `json:"pCopy"`
+	Contents  json.RawMessage `json:"contents"`
+	Buzzer    *int            `json:"buzzer"`
+	Cut       *int            `json:"cut"`
+	Reprint   *int            `json:"reprint"`
+	HeadLines *int            `json:"headLines"`
+	TailLines *int            `json:"tailLines"`
 }
 
-// validate 校验必填字段(无降级):buzzer/cut/reprint/headLines/tailLines 均必传且合法。
-func (r *PrintRequest) validate() error {
-	var miss []string
-	if r.Buzzer == nil {
-		miss = append(miss, "buzzer")
+// validate 校验字段。compat=false 时五参数必填。
+func (r *PrintRequest) validate(compat bool) error {
+	if !compat {
+		var miss []string
+		if r.Buzzer == nil {
+			miss = append(miss, "buzzer")
+		}
+		if r.Cut == nil {
+			miss = append(miss, "cut")
+		}
+		if r.Reprint == nil {
+			miss = append(miss, "reprint")
+		}
+		if r.HeadLines == nil {
+			miss = append(miss, "headLines")
+		}
+		if r.TailLines == nil {
+			miss = append(miss, "tailLines")
+		}
+		if len(miss) > 0 {
+			return errcode.Wrap(errcode.MissingField, fmt.Errorf("缺少必填字段: %s(buzzer/cut/reprint/headLines/tailLines 均必传)", strings.Join(miss, "、")))
+		}
 	}
-	if r.Cut == nil {
-		miss = append(miss, "cut")
-	}
-	if r.Reprint == nil {
-		miss = append(miss, "reprint")
-	}
-	if r.HeadLines == nil {
-		miss = append(miss, "headLines")
-	}
-	if r.TailLines == nil {
-		miss = append(miss, "tailLines")
-	}
-	if len(miss) > 0 {
-		return errcode.Wrap(errcode.MissingField, fmt.Errorf("缺少必填字段: %s(buzzer/cut/reprint/headLines/tailLines 均必传)", strings.Join(miss, "、")))
-	}
-	if *r.Buzzer != 0 && *r.Buzzer != 1 {
+	if r.Buzzer != nil && *r.Buzzer != 0 && *r.Buzzer != 1 {
 		return errcode.Wrap(errcode.BadSwitch, fmt.Errorf("buzzer 只能为 0 或 1"))
 	}
-	if *r.Cut != 0 && *r.Cut != 1 {
+	if r.Cut != nil && *r.Cut != 0 && *r.Cut != 1 {
 		return errcode.Wrap(errcode.BadSwitch, fmt.Errorf("cut 只能为 0 或 1"))
 	}
-	if *r.Reprint != 0 && *r.Reprint != 1 {
+	if r.Reprint != nil && *r.Reprint != 0 && *r.Reprint != 1 {
 		return errcode.Wrap(errcode.BadSwitch, fmt.Errorf("reprint 只能为 0 或 1"))
 	}
-	// 范围校验(全部严格,不合规直接拒,无降级):
-	if *r.HeadLines < 0 || *r.HeadLines > 100 {
+	if r.HeadLines != nil && (*r.HeadLines < 0 || *r.HeadLines > 100) {
 		return errcode.Wrap(errcode.BadLineRange, fmt.Errorf("headLines 需在 0-100 之间"))
 	}
-	if *r.TailLines < 0 || *r.TailLines > 100 {
+	if r.TailLines != nil && (*r.TailLines < 0 || *r.TailLines > 100) {
 		return errcode.Wrap(errcode.BadLineRange, fmt.Errorf("tailLines 需在 0-100 之间"))
 	}
 	if r.PWidth != 0 && r.PWidth != 58 && r.PWidth != 80 {
@@ -179,12 +146,12 @@ func ParseRequests(raw []byte) ([]PrintRequest, bool, error) {
 }
 
 // Process 处理一个打印请求:解析目标(printer/gateway,未注册自动登记)→ 渲染 →
-// **云端参数覆盖并持久化到目标打印机(cloud authoritative)** → 提交打印。
-// 返回受理结果(任务号+目标打印机快照)与 changed(注册表有变化=新登记或参数被覆盖,供调用方 save+刷新 UI)。
+// 云端已传参数覆盖并持久化 → 提交打印。
+// 返回受理结果(任务号+目标打印机快照+本单生效参数)与 changed。
 // MQTT 与 UI「JSON 测试」共用此逻辑。
 func Process(cfg *config.Config, svc *printsvc.Service, req *PrintRequest) (*ProcessResult, bool, error) {
-	// 必填校验(无降级):缺蜂鸣/切刀/重试/头尾行即拒,不回退打印机默认、不自动登记。
-	if err := req.validate(); err != nil {
+	compat := cfg.Settings.YunheCompat()
+	if err := req.validate(compat); err != nil {
 		return nil, false, err
 	}
 	p, registered, err := resolveTarget(cfg, req)
@@ -197,38 +164,96 @@ func Process(cfg *config.Config, svc *printsvc.Service, req *PrintRequest) (*Pro
 	}
 
 	var data []byte
+	var contentCut *bool
 	switch req.Type {
 	case 0:
-		data, err = layout.Render(req.Contents, width)
+		data, contentCut, err = layout.Render(req.Contents, width, compat)
+	case 5: // 云盒兼容 C1
+		if !compat {
+			return nil, registered, errcode.Wrap(errcode.BadContentType, fmt.Errorf("不支持的 type: 5(仅 0=JSON 排版 / 1=ESC base64)"))
+		}
+		data, contentCut, err = layout.Render(req.Contents, width, true)
 	case 1:
 		data, err = decodeESC(req.Contents)
 	default:
-		return nil, registered, errcode.Wrap(errcode.BadContentType, fmt.Errorf("不支持的 type: %d(仅 0=JSON 排版 / 1=ESC base64)", req.Type))
+		hint := "仅 0=JSON 排版 / 1=ESC base64"
+		if compat {
+			hint = "仅 0/5=JSON 排版 / 1=ESC base64"
+		}
+		return nil, registered, errcode.Wrap(errcode.BadContentType, fmt.Errorf("不支持的 type: %d(%s)", req.Type, hint))
 	}
 	if err != nil {
-		return nil, registered, fmt.Errorf("渲染失败: %w", err) // %w 保留链上的错误码
+		return nil, registered, fmt.Errorf("渲染失败: %w", err)
 	}
 
-	// 由必填字段生成生效参数(蜂鸣/切刀 0/1→bool;reprint 0/1→是否带重打抬头;头/尾空行透传)。
-	buzzer, cut := *req.Buzzer == 1, *req.Cut == 1
-	reprint := *req.Reprint == 1
-	head, tail := *req.HeadLines, *req.TailLines
+	upd := config.PrinterUpdate{
+		Name:  strings.TrimSpace(req.Printer.Name),
+		Brand: model.Brand(strings.TrimSpace(req.Printer.Brand)),
+		Width: req.Printer.Width,
+	}
+	opts := &printsvc.Options{}
+	var effBuzzer, effCut, effReprint, effHead, effTail int
+	if p.BuzzerEnabled {
+		effBuzzer = 1
+	}
+	if p.Cuts() {
+		effCut = 1
+	}
+	effHead, effTail = p.HeadLines, p.TailLines
 
-	// cloud authoritative:云端下发的参数 + printer 身份覆盖并持久化到目标打印机(reprint 是每单行为,不持久化)。
-	changed := cfg.UpdatePrinterFromCloud(p.ID, config.PrinterUpdate{
-		Name:          strings.TrimSpace(req.Printer.Name),
-		Brand:         model.Brand(strings.TrimSpace(req.Printer.Brand)),
-		Width:         req.Printer.Width,
-		BuzzerEnabled: buzzer,
-		CutDisabled:   !cut,
-		HeadLines:     head,
-		TailLines:     tail,
-	})
+	if req.Buzzer != nil {
+		b := *req.Buzzer == 1
+		opts.Buzzer = &b
+		upd.BuzzerEnabled = &b
+		effBuzzer = *req.Buzzer
+	}
+	if req.Cut != nil {
+		c := *req.Cut == 1
+		opts.Cut = &c
+		cd := !c
+		upd.CutDisabled = &cd
+		effCut = *req.Cut
+	} else if compat && contentCut != nil {
+		// 云盒兼容 C3: 顶层未传 cut 时用 contents cut;只影响本单,不写回。
+		opts.Cut = contentCut
+		if *contentCut {
+			effCut = 1
+		} else {
+			effCut = 0
+		}
+	}
+	if req.Reprint != nil {
+		r := *req.Reprint == 1
+		opts.Reprint = &r
+		effReprint = *req.Reprint
+	}
+	if req.HeadLines != nil {
+		h := *req.HeadLines
+		opts.HeadLines = &h
+		upd.HeadLines = &h
+		effHead = h
+	}
+	if req.TailLines != nil {
+		tl := *req.TailLines
+		opts.TailLines = &tl
+		upd.TailLines = &tl
+		effTail = tl
+	}
 
-	cloudID := req.ID // 值拷贝,任务终态事件回携此 id 上报打印结果
-	opts := &printsvc.Options{
-		Cut: &cut, Buzzer: &buzzer, Reprint: &reprint,
-		HeadLines: &head, TailLines: &tail, CloudID: &cloudID,
+	changed := cfg.UpdatePrinterFromCloud(p.ID, upd)
+	if p2 := cfg.FindPrinter(p.ID); p2 != nil {
+		p = p2
+	}
+
+	cloudID := req.ID
+	opts.CloudID = &cloudID
+	ct := req.Type
+	if ct == 5 {
+		ct = 0 // 入库/预览归一为 JSON
+	}
+	opts.ContentType = &ct
+	if ct == 0 {
+		opts.SourceJSON = append([]byte(nil), req.Contents...)
 	}
 	copies := req.PCopy
 	if copies <= 0 {
@@ -241,13 +266,22 @@ func Process(cfg *config.Config, svc *printsvc.Service, req *PrintRequest) (*Pro
 			first = no
 		}
 	}
-	return &ProcessResult{JobNo: first, Printer: *p}, registered || changed, nil
+	return &ProcessResult{
+		JobNo: first, Printer: *p,
+		Buzzer: effBuzzer, Cut: effCut, Reprint: effReprint,
+		HeadLines: effHead, TailLines: effTail,
+		PWidth: width, PCopy: copies, ContentType: ct,
+	}, registered || changed, nil
 }
 
-// ProcessResult 是受理成功的结果:首个任务号 + 目标打印机快照(值拷贝,供回执携带身份)。
+// ProcessResult 是受理成功的结果:首个任务号 + 目标打印机快照 + 本单生效参数(供 accepted 回执)。
 type ProcessResult struct {
-	JobNo   int
-	Printer model.Printer
+	JobNo                int
+	Printer              model.Printer
+	Buzzer, Cut, Reprint int
+	HeadLines, TailLines int
+	PWidth, PCopy        int // 实际渲染纸宽 / 份数
+	ContentType          int // 0=JSON / 1=ESC(type=5 归一为 0)
 }
 
 // resolveTarget 解析打印目标并在需要时自动登记(随打印下发建列表)。

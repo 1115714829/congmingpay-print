@@ -23,6 +23,15 @@ func TestJoinParentTopic(t *testing.T) {
 	if _, err := JoinParentTopic(long, long, "cmd"); err == nil {
 		t.Fatal("期望超长错误")
 	}
+	if _, err := JoinParentTopic("/", "M1", "cmd"); err == nil {
+		t.Fatal("仅斜杠的父主题应变空并报错")
+	}
+	if _, err := JoinParentTopic("server", "//", "cmd"); err == nil {
+		t.Fatal("仅斜杠的自定义 ID 应变空并报错")
+	}
+	if _, err := JoinParentTopic("server", "M1", " / "); err == nil {
+		t.Fatal("仅斜杠的后缀应变空并报错")
+	}
 }
 
 func TestMacSignatureKnownVector(t *testing.T) {
@@ -64,6 +73,27 @@ func TestResolveAliyun(t *testing.T) {
 	}
 	if p.Password != MacSignature("sk", p.ClientID) {
 		t.Fatal("password 不符")
+	}
+}
+
+func TestResolveAliyunTrimsSecretKey(t *testing.T) {
+	base := model.AliyunMQTT{
+		Endpoint: "e", Port: 1883, InstanceId: "i", AccessKey: "ak",
+		GroupId: "GID", ParentTopic: "server", DeviceId: "d",
+		DownSuffix: "cmd", UpSuffix: "report",
+	}
+	base.SecretKey = "sk"
+	p1, ok, err := Resolve(model.MQTT{Enabled: true, Provider: model.MQTTProviderAliyun, Aliyun: base})
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	base.SecretKey = "  sk\n"
+	p2, ok, err := Resolve(model.MQTT{Enabled: true, Provider: model.MQTTProviderAliyun, Aliyun: base})
+	if err != nil || !ok {
+		t.Fatalf("padded ok=%v err=%v", ok, err)
+	}
+	if p1.Password != p2.Password {
+		t.Fatalf("SecretKey 首尾空白应 Trim 后再签名: %q vs %q", p1.Password, p2.Password)
 	}
 }
 

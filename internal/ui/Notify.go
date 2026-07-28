@@ -7,6 +7,7 @@ import (
 	"unicode/utf16"
 
 	"congmingpay/internal/logger"
+	"congmingpay/internal/model"
 	"congmingpay/internal/printsvc"
 )
 
@@ -89,6 +90,18 @@ func (a *App) NotifyJobEvent(ev printsvc.JobEvent) {
 		a.alertRaise(alertJobWaiting, key, alertWarn, "长时间等待 "+txt, time.Now())
 	case printsvc.EventDone:
 		a.alertResolve(alertJobWaiting, key)
+		when := time.Now().Format(model.LastPrintTimeLayout)
+		id := ev.Printer.ID
+		if a.mw != nil {
+			a.mw.Synchronize(func() {
+				if a.cfg.UpdateLastPrint(id, when) {
+					a.save()
+					a.refreshPrinters()
+				}
+			})
+		} else if a.cfg.UpdateLastPrint(id, when) {
+			a.save()
+		}
 	}
 }
 

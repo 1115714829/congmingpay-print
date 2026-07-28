@@ -16,6 +16,7 @@ func (a *App) jobsPageWidget() Composite {
 			Composite{
 				Layout: HBox{Margins: Margins{Left: 6, Top: 4, Right: 6, Bottom: 4}, Spacing: 4},
 				Children: []Widget{
+					PushButton{Text: "预览", OnClicked: a.onPreviewJob},
 					PushButton{Text: "重新打印", OnClicked: a.onRetryJob},
 					PushButton{Text: "取消", OnClicked: a.onCancelJob},
 					PushButton{Text: "清除已完成", OnClicked: a.onClearDone},

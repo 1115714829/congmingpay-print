@@ -20,29 +20,35 @@ func baseReq() PrintRequest {
 	}
 }
 
-// 必填范围校验:不合规直接拒绝,无降级;错误携带全局错误码。
+// 字段校验:不合规直接拒绝;兼容开时五参数可省略,关时必填。
 func TestValidateRanges(t *testing.T) {
 	cases := []struct {
-		name string
-		mod  func(*PrintRequest)
-		want string // 空=应通过
-		code int    // 期望错误码(want 非空时校验)
+		name   string
+		mod    func(*PrintRequest)
+		want   string // 空=应通过
+		code   int    // 期望错误码(want 非空时校验)
+		compat bool
 	}{
-		{"headLines 负", func(r *PrintRequest) { r.HeadLines = intp(-1) }, "headLines", errcode.BadLineRange},
-		{"headLines 101", func(r *PrintRequest) { r.HeadLines = intp(101) }, "headLines", errcode.BadLineRange},
-		{"tailLines 负", func(r *PrintRequest) { r.TailLines = intp(-1) }, "tailLines", errcode.BadLineRange},
-		{"tailLines 101", func(r *PrintRequest) { r.TailLines = intp(101) }, "tailLines", errcode.BadLineRange},
-		{"pWidth 33", func(r *PrintRequest) { r.PWidth = 33 }, "pWidth", errcode.BadPWidth},
-		{"缺必填", func(r *PrintRequest) { r.Buzzer = nil }, "缺少必填字段", errcode.MissingField},
-		{"buzzer 取值", func(r *PrintRequest) { r.Buzzer = intp(2) }, "buzzer", errcode.BadSwitch},
-		{"边界合法", func(r *PrintRequest) { r.HeadLines = intp(100); r.TailLines = intp(100); r.PWidth = 58 }, "", 0},
-		{"pWidth 不填合法", func(r *PrintRequest) { r.PWidth = 0 }, "", 0},
+		{"headLines 负", func(r *PrintRequest) { r.HeadLines = intp(-1) }, "headLines", errcode.BadLineRange, true},
+		{"headLines 101", func(r *PrintRequest) { r.HeadLines = intp(101) }, "headLines", errcode.BadLineRange, true},
+		{"tailLines 负", func(r *PrintRequest) { r.TailLines = intp(-1) }, "tailLines", errcode.BadLineRange, true},
+		{"tailLines 101", func(r *PrintRequest) { r.TailLines = intp(101) }, "tailLines", errcode.BadLineRange, true},
+		{"pWidth 33", func(r *PrintRequest) { r.PWidth = 33 }, "pWidth", errcode.BadPWidth, true},
+		{"省略五参数合法(兼容开)", func(r *PrintRequest) {
+			r.Buzzer, r.Cut, r.Reprint, r.HeadLines, r.TailLines = nil, nil, nil, nil, nil
+		}, "", 0, true},
+		{"省略五参数拒(兼容关)", func(r *PrintRequest) {
+			r.Buzzer, r.Cut, r.Reprint, r.HeadLines, r.TailLines = nil, nil, nil, nil, nil
+		}, "缺少必填字段", errcode.MissingField, false},
+		{"buzzer 取值", func(r *PrintRequest) { r.Buzzer = intp(2) }, "buzzer", errcode.BadSwitch, true},
+		{"边界合法", func(r *PrintRequest) { r.HeadLines = intp(100); r.TailLines = intp(100); r.PWidth = 58 }, "", 0, true},
+		{"pWidth 不填合法", func(r *PrintRequest) { r.PWidth = 0 }, "", 0, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			req := baseReq()
 			c.mod(&req)
-			err := req.validate()
+			err := req.validate(c.compat)
 			if c.want == "" {
 				if err != nil {
 					t.Fatalf("应通过,got: %v", err)

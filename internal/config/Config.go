@@ -81,7 +81,21 @@ func Load(path string) (*Config, error) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
+	cfg.normalize()
 	return cfg, nil
+}
+
+// normalize 补全旧配置缺省字段。
+func (c *Config) normalize() {
+	c.Settings.JobHistoryDays = model.ClampJobHistoryDays(c.Settings.JobHistoryDays)
+	for _, p := range c.Printers {
+		if p == nil {
+			continue
+		}
+		if p.Source != model.SourceCloud {
+			p.Source = model.SourceLocal
+		}
+	}
 }
 
 // Save 将配置以 JSON 写入 path。
@@ -123,27 +137,26 @@ func (c *Config) UpsertPrinter(in *model.Printer) (*model.Printer, bool) {
 	if in.Conn == model.ConnNetwork && in.Port == "" {
 		in.Port = "9100"
 	}
-	if in.LastPrint == "" {
-		in.LastPrint = "云端下发"
-	}
+	in.Source = model.SourceCloud // 新建才走此分支;已存在不改来源
+	in.LastPrint = ""             // 未打过;勿写「云端下发」文案
 	c.Printers = append(c.Printers, in)
 	return in, true
 }
 
 // PrinterUpdate 是云端下发要覆盖到本地打印机的字段(身份 + 参数)。
+// LegacyCompat C2 / 云盒兼容: 参数指针 nil=消息未传该字段,不覆盖。
 type PrinterUpdate struct {
 	Name  string      // 空=不改
 	Brand model.Brand // 空=不改
 	Width int         // 非 58/80=不改
-	// 以下参数总是覆盖(打印消息必填):
-	BuzzerEnabled bool
-	CutDisabled   bool
-	HeadLines     int
-	TailLines     int
+	BuzzerEnabled *bool
+	CutDisabled   *bool
+	HeadLines     *int
+	TailLines     *int
 }
 
 // UpdatePrinterFromCloud 用云端下发覆盖并持久化打印机的身份+参数(cloud authoritative)。
-// 身份字段有才改;5 个参数总覆盖。逐字段比较,有实际改动才返回 true(供调用方决定是否落盘/刷新)。加写锁。
+// 身份字段有才改;参数仅覆盖非 nil 项。逐字段比较,有实际改动才返回 true。加写锁。
 func (c *Config) UpdatePrinterFromCloud(id string, u PrinterUpdate) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -169,23 +182,36 @@ func (c *Config) UpdatePrinterFromCloud(id string, u PrinterUpdate) bool {
 			p.Width = u.Width
 			set(true)
 		}
-		if p.BuzzerEnabled != u.BuzzerEnabled {
-			p.BuzzerEnabled = u.BuzzerEnabled
+		if u.BuzzerEnabled != nil && p.BuzzerEnabled != *u.BuzzerEnabled {
+			p.BuzzerEnabled = *u.BuzzerEnabled
 			set(true)
 		}
-		if p.CutDisabled != u.CutDisabled {
-			p.CutDisabled = u.CutDisabled
+		if u.CutDisabled != nil && p.CutDisabled != *u.CutDisabled {
+			p.CutDisabled = *u.CutDisabled
 			set(true)
 		}
-		if p.HeadLines != u.HeadLines {
-			p.HeadLines = u.HeadLines
+		if u.HeadLines != nil && p.HeadLines != *u.HeadLines {
+			p.HeadLines = *u.HeadLines
 			set(true)
 		}
-		if p.TailLines != u.TailLines {
-			p.TailLines = u.TailLines
+		if u.TailLines != nil && p.TailLines != *u.TailLines {
+			p.TailLines = *u.TailLines
 			set(true)
 		}
 		return changed
+	}
+	return false
+}
+
+// UpdateLastPrint 写入打印机上次成功打印时间(绝对时间串)。命中返回 true。
+func (c *Config) UpdateLastPrint(id, when string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, p := range c.Printers {
+		if p.ID == id {
+			p.LastPrint = when
+			return true
+		}
 	}
 	return false
 }

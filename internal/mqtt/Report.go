@@ -13,7 +13,7 @@ import (
 // 本文件是两类上行消息(report/state)的结构与发布口。
 // 消息 type 与字段为本服务与服务端的约定;全部发往配置的上报主题(best-effort,失败原因落日志)。
 
-// eventAccepted 是受理成功事件(在 mqtt 层产生;done/failed/waiting 由 printsvc 事件产生)。
+// eventAccepted 是受理成功事件(完整协议由 mqtt 层产生;云盒兼容开时不上报,关时由 onPrint 发布)。
 const eventAccepted = "accepted"
 
 // reportPrinter 是 report 消息中的打印机身份段。
@@ -69,8 +69,9 @@ type statePrinter struct {
 	Buzzer    bool   `json:"buzzer"`
 	Cut       bool   `json:"cut"`
 	HeadLines int    `json:"headLines"`
-	TailLines int    `json:"tailLines"` // 尾部走纸偏移量(本地属性页允许负值)
-	LastPrint string `json:"lastPrint,omitempty"`
+	TailLines int    `json:"tailLines"`           // 尾部走纸偏移量(本地属性页允许负值)
+	Source    string `json:"source,omitempty"`    // local|cloud
+	LastPrint string `json:"lastPrint,omitempty"` // 上次成功打印绝对时间
 }
 
 // stateMsg 状态快照:服务在线 + 全部打印机全量;离线为简版(printers 省略,遗嘱同)。
@@ -102,8 +103,23 @@ func (c *Client) snapshot() (pmqtt.Client, string, bool) {
 	return c.cli, c.merchant, c.enabled
 }
 
-// PublishJobEvent 上报任务事件(done/failed/waiting → report)。MQTT 未启用时静默跳过。
+// PublishJobEvent 上报任务事件(done/failed;waiting 仅在云盒兼容关闭时上报)。
+// 本地系统通知不受此过滤影响。读活配置 cfg.Settings,无需 MQTT Reload。
 func (c *Client) PublishJobEvent(ev printsvc.JobEvent) {
+	yunheCompat := true // cfg 缺失时按兼容开(仅终态),与默认设置一致
+	if c.cfg != nil {
+		yunheCompat = c.cfg.Settings.YunheCompat()
+	}
+	switch ev.Event {
+	case printsvc.EventDone, printsvc.EventFailed:
+		// 始终上报
+	case printsvc.EventWaiting:
+		if yunheCompat {
+			return // 云盒兼容 C4: 不上报 waiting
+		}
+	default:
+		return
+	}
 	cli, merchant, enabled := c.snapshot()
 	if !enabled {
 		return
@@ -138,7 +154,8 @@ func (c *Client) PublishState() {
 		p := &list[i]
 		sp := statePrinter{
 			PrinterID: p.ID, Printer: p.Name, Brand: p.BrandLabel(), Width: p.Width, Conn: string(p.Conn),
-			Buzzer: p.BuzzerEnabled, Cut: p.Cuts(), HeadLines: p.HeadLines, TailLines: p.TailLines, LastPrint: p.LastPrint,
+			Buzzer: p.BuzzerEnabled, Cut: p.Cuts(), HeadLines: p.HeadLines, TailLines: p.TailLines,
+			Source: string(p.EffectiveSource()), LastPrint: p.LastPrint,
 		}
 		if p.Conn == model.ConnUSB {
 			sp.USBName = p.USBName

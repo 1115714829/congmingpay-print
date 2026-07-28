@@ -28,6 +28,8 @@ func (a *App) runProperties(p *model.Printer) bool {
 	fields := []Widget{
 		Label{Text: "名称:"},
 		LineEdit{AssignTo: &nameLE, Text: p.Name, OnTextChanged: func() { outName = strings.TrimSpace(nameLE.Text()) }},
+		Label{Text: "来源:"},
+		Label{Text: p.SourceLabel()},
 		Label{Text: "品牌:"},
 		ComboBox{AssignTo: &brandCB, Model: brandNames(), CurrentIndex: outBrandIdx, OnCurrentIndexChanged: func() { outBrandIdx = brandCB.CurrentIndex() }},
 		Label{Text: "打印时蜂鸣:"},
@@ -36,6 +38,8 @@ func (a *App) runProperties(p *model.Printer) bool {
 		CheckBox{AssignTo: &cutCB, Text: "启用切刀(打印后切纸)", Checked: p.Cuts(), OnCheckedChanged: func() { outCut = cutCB.Checked() }},
 		Label{Text: "规格:"},
 		Label{Text: p.WidthLabel()},
+		Label{Text: "上次打印:"},
+		Label{Text: p.LastPrintLabel()},
 		Label{Text: "首部空行:"},
 		LineEdit{AssignTo: &headLE, Text: strconv.Itoa(p.HeadLines), OnTextChanged: func() { outHead = atoiOr(headLE.Text(), 0) }},
 		Label{Text: "尾部空行:"},

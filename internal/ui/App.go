@@ -67,11 +67,13 @@ type App struct {
 	monitorsMu sync.Mutex
 
 	// 设置视图
-	setName       *walk.LineEdit
-	notifyEnabled *walk.CheckBox
-	mqttEnabled   *walk.CheckBox
-	mqttTabs      *walk.TabWidget
-	mqttAliyunTab int // 创建后切到阿里云 Tab(1)或自建(0)
+	setName         *walk.LineEdit
+	notifyEnabled   *walk.CheckBox
+	yunheCompat     *walk.CheckBox // 云盒兼容模式(勾选=开=C1–C4)
+	jobHistoryDays  *walk.LineEdit
+	mqttEnabled     *walk.CheckBox
+	mqttTabs        *walk.TabWidget
+	mqttProviderTab int // 创建后切到对应 Provider Tab:0自建 1云消息队列 2物联网
 	// 自建
 	mqttBroker *walk.LineEdit
 	mqttPort   *walk.LineEdit
@@ -93,10 +95,24 @@ type App struct {
 	aliPreviewSub *walk.Label
 	aliPreviewRep *walk.Label
 	aliPreviewCID *walk.Label
-	mqttStatus    *walk.Label
-	docEnabled    *walk.CheckBox
-	docPort       *walk.LineEdit
-	docURL        *walk.Label
+	// 阿里云物联网平台(一机一密)
+	iotProductKey   *walk.LineEdit
+	iotDeviceName   *walk.LineEdit
+	iotDeviceSecret *walk.LineEdit
+	iotRegionId     *walk.LineEdit
+	iotEndpoint     *walk.LineEdit
+	iotPort         *walk.LineEdit
+	iotDownSuffix   *walk.LineEdit
+	iotUpSuffix     *walk.LineEdit
+	iotPreviewSub   *walk.Label
+	iotPreviewRep   *walk.Label
+	iotPreviewHost  *walk.Label
+	iotPreviewUser  *walk.Label
+	iotPreviewCID   *walk.Label
+	mqttStatus      *walk.Label
+	docEnabled      *walk.CheckBox
+	docPort         *walk.LineEdit
+	docURL          *walk.Label
 }
 
 // NewApp 创建界面控制器。
@@ -160,8 +176,8 @@ func (a *App) Run() error {
 	}).Create(); err != nil {
 		return err
 	}
-	if a.mqttTabs != nil && a.mqttAliyunTab > 0 {
-		_ = a.mqttTabs.SetCurrentIndex(a.mqttAliyunTab)
+	if a.mqttTabs != nil && a.mqttProviderTab > 0 {
+		_ = a.mqttTabs.SetCurrentIndex(a.mqttProviderTab)
 	}
 
 	if icon != nil {

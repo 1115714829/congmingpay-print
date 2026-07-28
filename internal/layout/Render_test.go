@@ -14,7 +14,7 @@ import (
 // mustErr 断言整单拒绝:err 非空、含 contents[i] 定位与期望片段、不返回字节。
 func mustErr(t *testing.T, contents, want string) {
 	t.Helper()
-	data, err := Render([]byte(contents), 80)
+	data, _, err := Render([]byte(contents), 80, true)
 	if err == nil {
 		t.Fatalf("应整单拒绝,却渲染成功: %s", contents)
 	}
@@ -32,7 +32,7 @@ func mustErr(t *testing.T, contents, want string) {
 // mustOK 断言渲染成功且有输出。
 func mustOK(t *testing.T, contents string, width int) {
 	t.Helper()
-	data, err := Render([]byte(contents), width)
+	data, _, err := Render([]byte(contents), width, true)
 	if err != nil {
 		t.Fatalf("应渲染成功,got err: %v", err)
 	}
@@ -56,7 +56,43 @@ func testPNG(t *testing.T) (string, []byte) {
 
 func TestRejectUnknownType(t *testing.T) {
 	mustErr(t, `[{"type":"foo","cont":"x"}]`, `未知元素 type "foo"`)
-	mustErr(t, `[{"cont":"1","type":"cut"}]`, `未知元素 type "cut"`) // cut 不是排版元素,切纸由顶层 cut 字段控制
+}
+
+// 云盒兼容开:contents type=cut 接受;返回切纸意图;不写入 GS V。
+func TestLegacyCompatCutElement(t *testing.T) {
+	data, cut, err := Render([]byte(`[{"type":"text","cont":"hi"},{"cont":"1","type":"cut"}]`), 80, true)
+	if err != nil {
+		t.Fatalf("cut 应接受,got: %v", err)
+	}
+	if cut == nil || !*cut {
+		t.Fatalf("cut cont=1 意图应为 true,got %v", cut)
+	}
+	if bytes.Contains(data, []byte{0x1D, 0x56, 0x01}) {
+		t.Fatal("layout 不应写入 GS V(由 Finish 收尾)")
+	}
+	_, cut0, err := Render([]byte(`[{"type":"cut","cont":"0"}]`), 80, true)
+	if err != nil || cut0 == nil || *cut0 {
+		t.Fatalf("cut cont=0 意图应为 false,got %v err=%v", cut0, err)
+	}
+}
+
+func TestStrictRejectCutElement(t *testing.T) {
+	mustErrCompatOff(t, `[{"type":"text","cont":"hi"},{"cont":"1","type":"cut"}]`, `未知元素 type "cut"`)
+}
+
+// mustErrCompatOff 断言兼容关时整单拒绝。
+func mustErrCompatOff(t *testing.T, contents, want string) {
+	t.Helper()
+	data, _, err := Render([]byte(contents), 80, false)
+	if err == nil {
+		t.Fatalf("应整单拒绝,却渲染成功: %s", contents)
+	}
+	if data != nil {
+		t.Fatalf("拒绝时不应返回字节,got %d 字节", len(data))
+	}
+	if want != "" && !strings.Contains(err.Error(), want) {
+		t.Fatalf("错误应含 %q,got: %v", want, err)
+	}
 }
 
 func TestRejectTbodyWithoutThead(t *testing.T) {
@@ -150,7 +186,7 @@ func TestRejectPNGHTTPStatus(t *testing.T) {
 
 // 整单语义:中间一个非法 → 整体报错(含定位),不产出部分字节。
 func TestRejectWholeRequest(t *testing.T) {
-	data, err := Render([]byte(`[{"cont":"ok"},{"type":"foo"},{"cont":"ok2"}]`), 80)
+	data, _, err := Render([]byte(`[{"cont":"ok"},{"type":"foo"},{"cont":"ok2"}]`), 80, true)
 	if err == nil || data != nil {
 		t.Fatalf("应整单拒绝,got data=%v err=%v", data != nil, err)
 	}
@@ -205,7 +241,7 @@ func TestOKPNGHTTP(t *testing.T) {
 
 func TestSampleContentsPass(t *testing.T) {
 	for _, w := range []int{58, 80} {
-		if _, err := Render(SampleContents, w); err != nil {
+		if _, _, err := Render(SampleContents, w, true); err != nil {
 			t.Fatalf("SampleContents 在 %dmm 下应通过,got: %v", w, err)
 		}
 	}

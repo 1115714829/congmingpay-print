@@ -1,7 +1,10 @@
 // Package model 定义应用核心数据类型:打印机、任务、设置。
 package model
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Conn 是打印机连接方式。
 type Conn string
@@ -20,6 +23,17 @@ const (
 	BrandFeie     Brand = "飞蛾"
 	BrandOther    Brand = "其他"
 )
+
+// Source 是打印机登记来源(仅两种)。
+type Source string
+
+const (
+	SourceLocal Source = "local" // 本地添加(向导)
+	SourceCloud Source = "cloud" // 云端下发(MQTT 自动登记)
+)
+
+// LastPrintTimeLayout 是「上次打印时间」的固定墙钟格式。
+const LastPrintTimeLayout = "2006-01-02 15:04:05"
 
 // Brands 是下拉可选品牌顺序。
 var Brands = []Brand{BrandGprinter, BrandFeie, BrandOther}
@@ -56,7 +70,37 @@ type Printer struct {
 	HeadLines     int    `json:"headLines"`   // 内容前空行数(走纸)
 	TailLines     int    `json:"tailLines"`   // 尾部空行相对基数的偏移(可负;实际=escpos.TailFeed)
 	CutDisabled   bool   `json:"cutDisabled"` // true=不切纸(该机无切刀);反向字段,默认 false=启用切刀
-	LastPrint     string `json:"lastPrint"`
+	Source        Source `json:"source"`      // local|cloud;空=local(旧配置兼容)
+	LastPrint     string `json:"lastPrint"`   // 上次成功打印绝对时间(LastPrintTimeLayout);空=未打过
+}
+
+// SourceLabel 返回来源中文;空视为本地添加。
+func (p *Printer) SourceLabel() string {
+	switch p.EffectiveSource() {
+	case SourceCloud:
+		return "云端下发"
+	default:
+		return "本地添加"
+	}
+}
+
+// EffectiveSource 规范化来源(空=local)。
+func (p *Printer) EffectiveSource() Source {
+	if p.Source == SourceCloud {
+		return SourceCloud
+	}
+	return SourceLocal
+}
+
+// LastPrintLabel 返回表格展示文案;非合法时间串视为未打过(—)。
+func (p *Printer) LastPrintLabel() string {
+	if p.LastPrint == "" {
+		return "—"
+	}
+	if _, err := time.ParseInLocation(LastPrintTimeLayout, p.LastPrint, time.Local); err != nil {
+		return "—"
+	}
+	return p.LastPrint
 }
 
 // Cuts 返回是否在打印末尾切纸(反向字段:零值即启用切刀,缺省切纸)。

@@ -1,6 +1,6 @@
 // Package mqtt 是云端通道:MQTT 3.1.1 客户端。
 //
-// 支持自建(用户名密码)与阿里云(签名鉴权 + 主题模板)二选一(model.MQTT.Provider)。
+// 支持自建(用户名密码)、云消息队列(签名鉴权+主题模板)、物联网平台(一机一密)三选一(model.MQTT.Provider)。
 // 订阅 Resolve 产出的主题收打印/查询,向上报主题发 report/state(定时 state + LWT 离线)。
 package mqtt
 
@@ -271,23 +271,20 @@ func (c *Client) onPrint(cli pmqtt.Client, msg pmqtt.Message) {
 			continue
 		}
 		logger.Infof("MQTT id=%d 已提交 任务#%d(登记/更新=%v)", id, res.JobNo, reg)
-		copies := req.PCopy
-		if copies <= 0 {
-			copies = 1
+		// 云盒兼容 C4: 兼容开不上报 accepted;关闭后发完整协议(含 params)。
+		if !c.cfg.Settings.YunheCompat() {
+			c.publish(cli, reportMsg{
+				Type: "report", Merchant: merchant, Event: eventAccepted,
+				ID: id, JobNo: res.JobNo, Code: 0, Message: "已提交",
+				Printer: reportPrinterOf(&res.Printer),
+				Params: &reportParams{
+					Buzzer: res.Buzzer, Cut: res.Cut, Reprint: res.Reprint,
+					HeadLines: res.HeadLines, TailLines: res.TailLines,
+					PWidth: res.PWidth, PCopy: res.PCopy, ContentType: res.ContentType,
+				},
+				TS: time.Now().UnixMilli(),
+			})
 		}
-		width := res.Printer.Width
-		if req.PWidth == 58 || req.PWidth == 80 {
-			width = req.PWidth
-		}
-		c.publish(cli, reportMsg{Type: "report", Merchant: merchant, Event: eventAccepted,
-			ID: id, JobNo: res.JobNo, Code: 0, Message: "已提交",
-			Printer: reportPrinterOf(&res.Printer),
-			Params: &reportParams{
-				Buzzer: *req.Buzzer, Cut: *req.Cut, Reprint: *req.Reprint,
-				HeadLines: *req.HeadLines, TailLines: *req.TailLines,
-				PWidth: width, PCopy: copies, ContentType: req.Type,
-			},
-			TS: time.Now().UnixMilli()})
 	}
 	if changed {
 		c.save()
@@ -369,10 +366,14 @@ func TestConnect(m model.MQTT) (time.Duration, error) {
 		return 0, err
 	}
 	if !ok {
-		if m.EffectiveProvider() == model.MQTTProviderAliyun {
-			return 0, fmt.Errorf("阿里云参数不完整(地址/端口/InstanceId/AK/SK/GroupId/父主题/自定义ID/上下行后缀)")
+		switch m.EffectiveProvider() {
+		case model.MQTTProviderAliyun:
+			return 0, fmt.Errorf("云消息队列参数不完整(地址/端口/InstanceId/AK/SK/GroupId/父主题/自定义ID/上下行后缀)")
+		case model.MQTTProviderIot:
+			return 0, fmt.Errorf("物联网参数不完整(ProductKey/DeviceName/DeviceSecret/下行与上行后缀;MQTT地址或地域二选一)")
+		default:
+			return 0, fmt.Errorf("Broker/短商户号/上报主题 不完整")
 		}
-		return 0, fmt.Errorf("Broker/短商户号/上报主题 不完整")
 	}
 	opts := pmqtt.NewClientOptions()
 	opts.AddBroker(p.BrokerURL)

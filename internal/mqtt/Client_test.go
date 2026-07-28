@@ -111,28 +111,20 @@ func TestRoundTrip(t *testing.T) {
 	}
 	t.Logf("已产生打印任务 %d 个", len(svc.Jobs()))
 
-	// 应收到受理回执 report(accepted),且携带 merchant 身份与 code=0
+	// LegacyCompat C4: 不上报 accepted;目标不可达亦不上报 waiting → 短时不应有 report。
 	select {
 	case raw := <-gotAck:
 		var r struct {
-			Type     string
-			Merchant string
-			Event    string
-			ID       uint32
-			JobNo    int
-			Code     int
-			Message  string
+			Type  string `json:"type"`
+			Event string `json:"event"`
 		}
 		_ = json.Unmarshal([]byte(raw), &r)
-		t.Logf("收到上行: %s", raw)
-		if r.Type != "report" || r.Event != "accepted" {
-			t.Errorf("应收到 report/accepted, got %s/%s", r.Type, r.Event)
+		if r.Type == "report" && (r.Event == "accepted" || r.Event == "waiting") {
+			t.Errorf("LegacyCompat C4 不应上报 %s: %s", r.Event, raw)
 		}
-		if r.Merchant != merchant || r.Code != 0 || r.ID != 770001 {
-			t.Errorf("merchant/code/id 不符: %s/%d/%d", r.Merchant, r.Code, r.ID)
-		}
-	case <-time.After(5 * time.Second):
-		t.Error("未在 5s 内收到受理回执")
+		t.Logf("收到上行(非 accepted/waiting 可接受): %s", raw)
+	case <-time.After(2 * time.Second):
+		t.Log("2s 内无 report,符合 C4(无 accepted/waiting)")
 	}
 }
 
@@ -173,7 +165,7 @@ func TestReconnectRequiresReportTopic(t *testing.T) {
 }
 
 // TestReportRoundTrip:端到端——本地假打印机 + 公共 broker,应收到
-// report(accepted)、state(定时拍全量快照,含登记后的打印机)与 report(done);
+// state 与 report(done);LegacyCompat C4 下不应有 accepted。
 // 另验证 {"query":"printers"} 拉取与未知 query 的 1002 回执。依赖公共 broker;连不上则跳过。
 func TestReportRoundTrip(t *testing.T) {
 	merchant := "cmpselftest9272r"
@@ -250,12 +242,10 @@ func TestReportRoundTrip(t *testing.T) {
 		`"contents":[{"cont":"结果回执自测","type":"title"}]}`, port)
 	pub.Publish(merchant, 1, false, printJSON).Wait()
 
-	// 应收到 report(accepted,含 printer+params)、state(含刚登记打印机)与 report(done);
-	// 全部携带 merchant 身份。不校验先后顺序——accepted 由 paho router goroutine 发、
-	// done 由 dispatch goroutine 发,环回打印可 1ms 级完成,Publish 调用序无同步保证。
+	// LegacyCompat C4: 应收 done + state;不应收 accepted。
 	var sawAccepted, sawDone, sawState bool
 	timeout := time.After(20 * time.Second)
-	for !(sawAccepted && sawDone && sawState) {
+	for !(sawDone && sawState) {
 		select {
 		case raw := <-got:
 			var probe struct {
@@ -269,10 +259,6 @@ func TestReportRoundTrip(t *testing.T) {
 					Printer string `json:"printer"`
 					Width   int    `json:"width"`
 				} `json:"printers"`
-				Params *struct {
-					Cut    int `json:"cut"`
-					PWidth int `json:"pWidth"`
-				} `json:"params"`
 			}
 			_ = json.Unmarshal([]byte(raw), &probe)
 			t.Logf("收到上行: %s", raw)
@@ -281,20 +267,16 @@ func TestReportRoundTrip(t *testing.T) {
 			}
 			switch {
 			case probe.Type == "report" && probe.Event == "accepted":
-				if probe.ID != 880001 || probe.Code != 0 || probe.JobNo == 0 {
-					t.Errorf("accepted 内容不符: %s", raw)
-				}
-				if probe.Params == nil || probe.Params.Cut != 1 || probe.Params.PWidth != 80 {
-					t.Errorf("accepted 应携带本单参数: %s", raw)
-				}
 				sawAccepted = true
+				t.Errorf("LegacyCompat C4 不应上报 accepted: %s", raw)
+			case probe.Type == "report" && probe.Event == "waiting":
+				t.Errorf("LegacyCompat C4 不应上报 waiting: %s", raw)
 			case probe.Type == "report" && probe.Event == "done":
 				if probe.ID != 880001 || probe.Code != 0 || probe.JobNo == 0 {
 					t.Errorf("done 内容不符: %s", raw)
 				}
 				sawDone = true
 			case probe.Type == "state":
-				// 登记前的定时拍是空列表,跳过;登记后的拍应含 80mm 机。
 				if len(probe.Printers) == 0 {
 					break
 				}
@@ -304,7 +286,7 @@ func TestReportRoundTrip(t *testing.T) {
 				sawState = true
 			}
 		case <-timeout:
-			t.Fatalf("20s 内未收齐 accepted+done+state(accepted=%v done=%v state=%v)", sawAccepted, sawDone, sawState)
+			t.Fatalf("20s 内未收齐 done+state(done=%v state=%v accepted误报=%v)", sawDone, sawState, sawAccepted)
 		}
 	}
 
