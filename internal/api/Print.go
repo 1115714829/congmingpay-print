@@ -285,63 +285,50 @@ type ProcessResult struct {
 }
 
 // resolveTarget 解析打印目标并在需要时自动登记(随打印下发建列表)。
-// 目标由 printer(名/ID 字符串 或 {name,ip,brand,width} 对象)与 gateway(网口 IP)归一得出:
-//   - 有 IP(printer.ip 或 gateway 是 IP):已注册按 IP 命中则直接用、不改;未注册则 UpsertPrinter 新增。
-//   - 仅名/ID:FindPrinter(网口/USB 通用),未找到报错(无地址无法登记)。
-//   - gateway=="usb" 拒绝:USB 打印以 printer 指定名称(与状态快照上报的 printer/printerId 对应)。
+// 优先级:printer.ip > gateway:"usb" > 普通 gateway IP > printer 名/ID。
+//   - 有 IP(printer.ip 或 gateway 为网口地址):已注册按 IP 命中则直接用;未注册则 UpsertPrinter 新增。
+//   - gateway=="usb":按配置数组序取第一台 Conn=usb;无则 BadUSBTarget;不自动登记、不排序。
+//   - 仅名/ID:FindPrinter(网口/USB 通用),未找到报错。
 //
 // 返回目标打印机与 registered(是否新登记)。
 func resolveTarget(cfg *config.Config, req *PrintRequest) (*model.Printer, bool, error) {
 	ref := req.Printer
 	gw := strings.TrimSpace(req.Gateway)
 
-	// gateway 仅承载网口 IP;"usb" 不是合法目标(USB 机必须按名称/ID 指定)
-	if strings.EqualFold(gw, "usb") {
-		return nil, false, errcode.Wrap(errcode.BadUSBTarget, fmt.Errorf("USB 打印以 printer 指定打印机名称(gateway 仅支持网口 IP)"))
-	}
-
-	// 归一 IP/port:printer.ip 优先,否则 gateway 为 IP(可含 :port)
+	// 归一 IP/port:仅 printer.ip;gateway 为 usb 时不得当作 IP。
 	ip, port := "", "9100"
 	if v := strings.TrimSpace(ref.IP); v != "" {
 		ip = v
 		if pv := strings.TrimSpace(ref.Port); pv != "" {
 			port = pv
 		}
-	} else if gw != "" {
+	}
+
+	// 1) printer.ip → 网口
+	if ip != "" {
+		return resolveNetworkTarget(cfg, req, ref, ip, port)
+	}
+
+	// 2) gateway:"usb" → 配置序第一台 USB(须在把 gateway 当 IP 之前处理)
+	if strings.EqualFold(gw, "usb") {
+		for _, p := range cfg.PrinterList() {
+			if p.Conn == model.ConnUSB {
+				return p, false, nil
+			}
+		}
+		return nil, false, errcode.Wrap(errcode.BadUSBTarget, fmt.Errorf("未找到 USB 打印机，须先在本机添加 USB 打印机"))
+	}
+
+	// 3) gateway 为网口地址
+	if gw != "" {
 		ip = gw
 		if i := strings.LastIndex(gw, ":"); i >= 0 {
 			ip, port = gw[:i], gw[i+1:]
 		}
+		return resolveNetworkTarget(cfg, req, ref, ip, port)
 	}
 
-	// 1) 有 IP → 网口:已注册直接用(不动),未注册自动登记
-	if ip != "" {
-		for _, p := range cfg.PrinterList() {
-			if p.Conn == model.ConnNetwork && p.IP == ip {
-				return p, false, nil
-			}
-		}
-		// 自动登记必须能确定纸宽(printer.width → pWidth 回退链;两者皆缺/非法即拒,不兜底 80)
-		width := ref.Width
-		if width != 58 && width != 80 {
-			if req.PWidth == 58 || req.PWidth == 80 {
-				width = req.PWidth
-			} else {
-				return nil, false, errcode.Wrap(errcode.WidthUnknown, fmt.Errorf("无法确定纸宽: 自动登记新打印机需 printer.width 或 pWidth 为 58/80(收到 printer.width=%d、pWidth=%d)", ref.Width, req.PWidth))
-			}
-		}
-		name := strings.TrimSpace(ref.Name)
-		if name == "" {
-			name = ip // 没带名字就用 IP
-		}
-		p, isNew := cfg.UpsertPrinter(&model.Printer{
-			Name: name, Brand: model.Brand(strings.TrimSpace(ref.Brand)),
-			Width: width, Conn: model.ConnNetwork, IP: ip, Port: port,
-		})
-		return p, isNew, nil
-	}
-
-	// 2) 仅名/ID 选择器(网口/USB 通用;USB 机唯一的云端寻址方式)
+	// 4) 仅名/ID 选择器(网口/USB 通用)
 	if key := strings.TrimSpace(ref.Name); key != "" {
 		if p := cfg.FindPrinter(key); p != nil {
 			return p, false, nil
@@ -356,6 +343,32 @@ func resolveTarget(cfg *config.Config, req *PrintRequest) (*model.Printer, bool,
 	}
 
 	return nil, false, errcode.Wrap(errcode.NoTarget, fmt.Errorf("未指定打印目标(printer 或 gateway 至少填一个)"))
+}
+
+// resolveNetworkTarget 按网口 IP 命中已登记机或自动登记。
+func resolveNetworkTarget(cfg *config.Config, req *PrintRequest, ref PrinterRef, ip, port string) (*model.Printer, bool, error) {
+	for _, p := range cfg.PrinterList() {
+		if p.Conn == model.ConnNetwork && p.IP == ip {
+			return p, false, nil
+		}
+	}
+	width := ref.Width
+	if width != 58 && width != 80 {
+		if req.PWidth == 58 || req.PWidth == 80 {
+			width = req.PWidth
+		} else {
+			return nil, false, errcode.Wrap(errcode.WidthUnknown, fmt.Errorf("无法确定纸宽: 自动登记新打印机需 printer.width 或 pWidth 为 58/80(收到 printer.width=%d、pWidth=%d)", ref.Width, req.PWidth))
+		}
+	}
+	name := strings.TrimSpace(ref.Name)
+	if name == "" {
+		name = ip
+	}
+	p, isNew := cfg.UpsertPrinter(&model.Printer{
+		Name: name, Brand: model.Brand(strings.TrimSpace(ref.Brand)),
+		Width: width, Conn: model.ConnNetwork, IP: ip, Port: port,
+	})
+	return p, isNew, nil
 }
 
 // decodeESC 把 type=1 的 contents(base64 字符串)解码为原始 ESC 字节。

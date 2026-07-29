@@ -105,6 +105,17 @@ func (a *App) NotifyJobEvent(ev printsvc.JobEvent) {
 	}
 }
 
+// NotifyAcceptFailed 是 MQTT 打印受理失败的告警窗入口(无对应任务号,不进打印队列)。
+// 无自动消除;同 id 重复失败幂等更新。任意 goroutine 可调。
+func (a *App) NotifyAcceptFailed(id uint32, code int, message string) {
+	key := strconv.FormatUint(uint64(id), 10)
+	if id == 0 {
+		key = fmt.Sprintf("t%d", time.Now().UnixNano())
+	}
+	txt := fmt.Sprintf("云端打印受理失败 id=%d code=%d: %s", id, code, message)
+	a.alertRaise(alertAcceptFailed, key, alertError, txt, time.Now())
+}
+
 // mqttNotifyEdge 按连接布尔做边沿去重:已连→断开、断开→恢复各通知一次。
 // 仅在 UI 线程(onStatus 的 Synchronize 闭包)调用,mqttNotifySt 无需加锁。
 // 未启用/已停用(Active()==false)重置为中性——Close/reconnect 置 cli=nil 时不触发

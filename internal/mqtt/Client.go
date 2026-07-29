@@ -42,8 +42,9 @@ type Client struct {
 	connected      bool
 	lastErr        string
 	onChange       func()
-	onStatus       func()        // 连接状态变化回调(UI 刷新状态标签用)
-	stopTick       chan struct{} // 定时 state 上报 goroutine 的停止信号(随连接生命周期)
+	onStatus       func()                                         // 连接状态变化回调(UI 刷新状态标签用)
+	onAcceptFailed func(id uint32, code int, message string)     // 打印受理失败(UI 告警窗);契约:快速返回
+	stopTick       chan struct{}                                  // 定时 state 上报 goroutine 的停止信号(随连接生命周期)
 }
 
 // New 创建客户端(未连接;由 Start 按配置连接)。
@@ -62,6 +63,14 @@ func (c *Client) SetOnChange(f func()) {
 func (c *Client) SetOnStatus(f func()) {
 	c.mu.Lock()
 	c.onStatus = f
+	c.mu.Unlock()
+}
+
+// SetOnAcceptFailed 设置打印受理失败回调(Process 失败后触发;与 report failed 并联)。
+// 契约:快速返回、可任意 goroutine 调用。
+func (c *Client) SetOnAcceptFailed(f func(id uint32, code int, message string)) {
+	c.mu.Lock()
+	c.onAcceptFailed = f
 	c.mu.Unlock()
 }
 
@@ -265,9 +274,12 @@ func (c *Client) onPrint(cli pmqtt.Client, msg pmqtt.Message) {
 			changed = true
 		}
 		if e != nil {
-			logger.Errorf("MQTT 打印受理失败 id=%d code=%d: %v", id, errcode.CodeOf(e), e)
+			code := errcode.CodeOf(e)
+			msg := e.Error()
+			logger.Errorf("MQTT 打印受理失败 id=%d code=%d: %v", id, code, e)
 			c.publish(cli, reportMsg{Type: "report", Merchant: merchant, Event: printsvc.EventFailed,
-				ID: id, Code: errcode.CodeOf(e), Message: e.Error(), TS: time.Now().UnixMilli()})
+				ID: id, Code: code, Message: msg, TS: time.Now().UnixMilli()})
+			c.fireAcceptFailed(id, code, msg)
 			continue
 		}
 		logger.Infof("MQTT id=%d 已提交 任务#%d(登记/更新=%v)", id, res.JobNo, reg)
@@ -482,5 +494,15 @@ func (c *Client) fireStatus() {
 	c.mu.Unlock()
 	if f != nil {
 		f()
+	}
+}
+
+// fireAcceptFailed 通知 UI 打印受理失败(锁外调用)。
+func (c *Client) fireAcceptFailed(id uint32, code int, message string) {
+	c.mu.Lock()
+	f := c.onAcceptFailed
+	c.mu.Unlock()
+	if f != nil {
+		f(id, code, message)
 	}
 }

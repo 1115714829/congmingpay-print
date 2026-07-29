@@ -18,13 +18,13 @@ const (
 	metaNextNo = "next_no"
 )
 
-// DefaultJobsPath 返回 jobs.db 默认路径(与 exe 同目录)。
+// DefaultJobsPath 返回 jobs.db 默认路径(exe 同目录下 data\jobs.db)。
 func DefaultJobsPath() string {
 	exe, err := os.Executable()
 	if err != nil {
-		return "jobs.db"
+		return filepath.Join("data", "jobs.db")
 	}
-	return filepath.Join(filepath.Dir(exe), "jobs.db")
+	return filepath.Join(filepath.Dir(exe), "data", "jobs.db")
 }
 
 // Store 是打印任务 SQLite 持久化。
@@ -34,6 +34,9 @@ type Store struct {
 
 // OpenStore 打开或创建 jobs.db 并迁移表结构。
 func OpenStore(path string) (*Store, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
 	// busy_timeout 毫秒;modernc 用 _pragma 查询参数。
 	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 	db, err := sql.Open("sqlite", dsn)

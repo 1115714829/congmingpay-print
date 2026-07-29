@@ -85,30 +85,70 @@ func TestResolveTargetRequiresWidth(t *testing.T) {
 	}
 }
 
-// USB 寻址收紧:gateway:"usb" 不是合法目标 → 拒(code=BadUSBTarget);
-// USB 机唯一的云端寻址方式是 printer 名称/ID 选择器。
-func TestResolveTargetUSBByNameOnly(t *testing.T) {
+// USB 目标:gateway:"usb" 取配置序第一台 USB;无则 3003;名称/ID 选机仍可用。
+func TestResolveTargetGatewayUSB(t *testing.T) {
 	cfg := config.Default()
 	cfg.Printers = []*model.Printer{
+		{ID: "n1", Name: "网口1", Conn: model.ConnNetwork, IP: "192.168.1.1", Width: 80},
 		{ID: "u1", Name: "打印1", Conn: model.ConnUSB, USBName: "GP-58 Series", Width: 58},
 		{ID: "u2", Name: "打印2", Conn: model.ConnUSB, USBName: "GP-80 Series", Width: 80},
 	}
 
-	// gateway:"usb" → 拒收
+	// gateway:"usb" → 跳过网口,命中第一台 USB(u1),不新登记
 	req := baseReq()
 	req.Gateway = "usb"
-	_, _, err := resolveTarget(cfg, &req)
-	if err == nil || !strings.Contains(err.Error(), "printer 指定打印机名称") {
-		t.Fatalf("gateway=usb 应拒,got: %v", err)
+	p, isNew, err := resolveTarget(cfg, &req)
+	if err != nil || isNew || p == nil || p.ID != "u1" {
+		t.Fatalf("gateway=usb 应命中 u1,got p=%+v isNew=%v err=%v", p, isNew, err)
 	}
-	if got := errcode.CodeOf(err); got != errcode.BadUSBTarget {
-		t.Fatalf("错误码应为 %d,got %d", errcode.BadUSBTarget, got)
+	if p.Conn != model.ConnUSB {
+		t.Fatalf("应为 USB,got %s", p.Conn)
 	}
 
-	// printer 字符串=名称 → 命中对应 USB 机,不新登记
+	// 大小写不敏感
+	req = baseReq()
+	req.Gateway = "USB"
+	p, isNew, err = resolveTarget(cfg, &req)
+	if err != nil || isNew || p.ID != "u1" {
+		t.Fatalf("Gateway=USB 应命中 u1,got p=%+v isNew=%v err=%v", p, isNew, err)
+	}
+
+	// 无 USB → 3003,且不得登记 IP=usb 的脏网口机
+	cfgEmpty := config.Default()
+	cfgEmpty.Printers = []*model.Printer{
+		{ID: "n1", Name: "网口1", Conn: model.ConnNetwork, IP: "192.168.1.1", Width: 80},
+	}
+	req = baseReq()
+	req.Gateway = "usb"
+	_, _, err = resolveTarget(cfgEmpty, &req)
+	if err == nil || errcode.CodeOf(err) != errcode.BadUSBTarget {
+		t.Fatalf("无 USB 应为 BadUSBTarget,got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "未找到 USB 打印机") {
+		t.Fatalf("文案应含未找到 USB 打印机,got: %v", err)
+	}
+	for _, x := range cfgEmpty.PrinterList() {
+		if x.IP == "usb" || strings.EqualFold(x.IP, "usb") {
+			t.Fatalf("不得产生 IP=usb 的脏登记: %+v", x)
+		}
+	}
+	if n := len(cfgEmpty.PrinterList()); n != 1 {
+		t.Fatalf("打印机数量应仍为 1,got %d", n)
+	}
+
+	// printer.ip 优先于 gateway:"usb"
+	req = baseReq()
+	req.Printer = PrinterRef{Name: "网口1", IP: "192.168.1.1", Width: 80}
+	req.Gateway = "usb"
+	p, isNew, err = resolveTarget(cfg, &req)
+	if err != nil || isNew || p.ID != "n1" {
+		t.Fatalf("printer.ip 应优先命中网口 n1,got p=%+v isNew=%v err=%v", p, isNew, err)
+	}
+
+	// printer 名称选 USB 仍可用
 	req = baseReq()
 	req.Printer = PrinterRef{Name: "打印2"}
-	p, isNew, err := resolveTarget(cfg, &req)
+	p, isNew, err = resolveTarget(cfg, &req)
 	if err != nil || isNew || p.ID != "u2" {
 		t.Fatalf("按名称应命中 u2,got p=%+v isNew=%v err=%v", p, isNew, err)
 	}
@@ -121,7 +161,7 @@ func TestResolveTargetUSBByNameOnly(t *testing.T) {
 		t.Fatalf("对象 name 应命中 u1,got p=%+v isNew=%v err=%v", p, isNew, err)
 	}
 
-	// 名称未上报过(未登记)→ 3002 不识别
+	// 名称未登记 → 3002
 	req = baseReq()
 	req.Printer = PrinterRef{Name: "打印9"}
 	_, _, err = resolveTarget(cfg, &req)
@@ -129,7 +169,7 @@ func TestResolveTargetUSBByNameOnly(t *testing.T) {
 		t.Fatalf("未知名称应报 PrinterNotFound,got: %v", err)
 	}
 
-	// payload 携带 usbName 键 → 字段不识别(解析忽略),无其他目标即 3001
+	// payload 携带 usbName 键 → 字段不识别,无其他目标即 3001
 	var raw PrintRequest
 	if err := json.Unmarshal([]byte(`{"printer":{"usbName":"GP-58 Series"},"buzzer":0,"cut":1,"reprint":0,"headLines":0,"tailLines":0}`), &raw); err != nil {
 		t.Fatalf("解析不应失败: %v", err)

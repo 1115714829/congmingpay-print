@@ -227,6 +227,10 @@ func (a *App) Run() error {
 				a.mqttNotifyEdge() // 断线/恢复系统通知(边沿去重)
 			})
 		})
+		// 云端打印受理失败 → 常驻告警窗(无自动消除,仅手动清空)
+		a.mc.SetOnAcceptFailed(func(id uint32, code int, message string) {
+			a.NotifyAcceptFailed(id, code, message)
+		})
 	}
 
 	a.showPage(0)

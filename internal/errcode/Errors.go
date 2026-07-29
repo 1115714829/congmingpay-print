@@ -18,7 +18,7 @@ const (
 	BadContentType   = 2005 // 内容类型 type 非 0/1
 	NoTarget         = 3001 // 未指定打印目标
 	PrinterNotFound  = 3002 // 打印机名称/ID 未命中
-	BadUSBTarget     = 3003 // USB 目标非法(USB 打印以 printer 指定名称,gateway 仅支持网口 IP)
+	BadUSBTarget     = 3003 // gateway:"usb" 时本机无已登记 USB 打印机
 	WidthUnknown     = 3004 // 自动登记无法确定纸宽
 	RenderInvalid    = 4001 // 排版内容非法(元素级,message 带 contents[i] 定位)
 	RenderNotArray   = 4002 // contents 整体非排版元素数组

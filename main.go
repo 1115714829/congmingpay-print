@@ -27,8 +27,8 @@ import (
 )
 
 func main() {
-	logPath := logFilePath()
-	if closeLog, err := logger.Init(logPath); err == nil {
+	logDir := logDir()
+	if closeLog, err := logger.Init(logDir); err == nil {
 		defer closeLog()
 	}
 	// GUI 程序无控制台,panic 也要落盘,便于在程序目录日志里排查。
@@ -38,7 +38,7 @@ func main() {
 			os.Exit(2)
 		}
 	}()
-	logger.Infof("=== congmingpay 启动 (日志: %s) ===", logPath)
+	logger.Infof("=== congmingpay 启动 (日志: %s) ===", logger.CurrentPath())
 
 	// 单实例守卫(命名互斥体,跨会话):二次启动友好提示后退出,
 	// 不触碰配置/打印/MQTT/端口(避免与运行中实例互抢 MQTT ClientID 顶号、竞争损坏备份)。
@@ -110,11 +110,11 @@ func main() {
 	logger.Info("=== 正常退出 ===")
 }
 
-// logFilePath 返回与可执行文件同目录下的日志路径。
-func logFilePath() string {
+// logDir 返回与可执行文件同目录下的日志目录(log\)。
+func logDir() string {
 	exe, err := os.Executable()
 	if err != nil {
-		return "congmingpay.log"
+		return "log"
 	}
-	return filepath.Join(filepath.Dir(exe), "congmingpay.log")
+	return filepath.Join(filepath.Dir(exe), "log")
 }

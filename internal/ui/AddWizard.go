@@ -46,8 +46,12 @@ func (a *App) runAddWizard() *model.Printer {
 	outPort := "9100"
 	outBrandIdx := 0
 	outBuzzer := false
-	outUSBIdx := 0
+	outUSBIdx := -1
+	if len(usbNames) > 0 {
+		outUSBIdx = 0
+	}
 	outCut := true
+	usbCurrent := outUSBIdx // 空列表时须 -1;CurrentIndex:0 会让 Dialog.Create 报 invalid index
 
 	stepNames := []string{"纸张规格", "连接方式", "设备信息"}
 	update := func() {
@@ -120,7 +124,7 @@ func (a *App) runAddWizard() *model.Printer {
 						Layout:     Grid{Columns: 2, Spacing: 8, MarginsZero: true},
 						Children: []Widget{
 							Label{Text: "USB 设备:"},
-							ComboBox{AssignTo: &usbCB, Model: usbNames, CurrentIndex: 0, OnCurrentIndexChanged: func() { outUSBIdx = usbCB.CurrentIndex() }},
+							ComboBox{AssignTo: &usbCB, Model: usbNames, CurrentIndex: usbCurrent, OnCurrentIndexChanged: func() { outUSBIdx = usbCB.CurrentIndex() }},
 						},
 					},
 				},

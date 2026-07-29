@@ -23,6 +23,7 @@ const (
 	alertJobWaiting     alertKind = "job-waiting"     // key=任务号
 	alertPrinterOffline alertKind = "printer-offline" // key=打印机 ID
 	alertMqttDown       alertKind = "mqtt-down"       // key=""
+	alertAcceptFailed   alertKind = "accept-failed"   // key=请求 id(无自动消除,仅手动清空)
 )
 
 // alertSeverity 决定行颜色:warn=橙,error=红。

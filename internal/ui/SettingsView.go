@@ -79,7 +79,7 @@ func (a *App) settingsPageWidget() Composite {
 					Label{Text: "打印历史保留天数:"},
 					LineEdit{AssignTo: &a.jobHistoryDays, Text: strconv.Itoa(model.ClampJobHistoryDays(s.JobHistoryDays)), CueBanner: "1-365,默认7"},
 					Label{Text: ""},
-					Label{Text: "仅自动清理「已完成/失败」任务;排队中与等待重试不受限。落盘文件 jobs.db。", TextColor: colGray},
+					Label{Text: "仅自动清理「已完成/失败」任务;排队中与等待重试不受限。落盘文件 data\\jobs.db。", TextColor: colGray},
 				},
 			},
 			GroupBox{
