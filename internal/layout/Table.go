@@ -28,11 +28,9 @@ func (r *renderer) table(e *Element) error {
 	if err != nil {
 		return err
 	}
-	if w > 0 {
-		cpl = cpl / (w + 1) // 放大后每行字符变少
-	}
 
-	// 按百分比分配列字符宽,末列吸收误差补足到 cpl(数据已校验合法,此处仅为取整补偿)
+	// 按纸宽满行分配列宽:百分比相对 58mm=32/80mm=48 字符,放大不改变列数,仅放大字符。
+	// 末列吸收取整误差补足到 cpl(数据已校验合法,此处仅为取整补偿)。
 	cols := make([]int, len(pcts))
 	used := 0
 	for i, p := range pcts {
@@ -64,17 +62,19 @@ func (r *renderer) table(e *Element) error {
 		rows[ri] = cells
 	}
 
-	if w > 0 {
-		r.b.SetSize(w, w)
-	}
 	if names != nil {
-		r.tableRow(names, cols)
+		r.tableRow(names, cols, 1)
 		if e.LineDiv == 1 {
 			r.b.Line(strings.Repeat("-", cpl))
 		}
 	}
+	scale := 1
+	if w > 0 {
+		scale = w + 1
+		r.b.SetSize(w, w)
+	}
 	for _, cells := range rows {
-		r.tableRow(cells, cols)
+		r.tableRow(cells, cols, scale)
 		if e.LineDiv == 1 {
 			r.b.Line(strings.Repeat("-", cpl))
 		}
@@ -88,8 +88,9 @@ func (r *renderer) table(e *Element) error {
 	return nil
 }
 
-// tableRow 渲染一行:各单元格按列宽换行,行内多行左对齐拼接。
-func (r *renderer) tableRow(cells []string, cols []int) {
+// tableRow 渲染一行:各单元格按列宽(标准字格数)换行,行内多行左对齐拼接。
+// scale=当前字号相对标准字的宽度倍率:表头=1,放大 tbody= w+1;格界按物理宽折算,保证列界对齐。
+func (r *renderer) tableRow(cells []string, cols []int, scale int) {
 	wrapped := make([][]string, len(cols))
 	maxLines := 1
 	for i := range cols {
@@ -109,15 +110,17 @@ func (r *renderer) tableRow(cells []string, cols []int) {
 			if ln < len(wrapped[i]) {
 				seg = wrapped[i][ln]
 			}
-			sb.WriteString(padCell(seg, cw))
+			sb.WriteString(padCell(seg, cw, scale))
 		}
 		r.b.SetAlign(escpos.AlignLeft).Line(strings.TrimRight(sb.String(), " "))
 	}
 }
 
-// padCell 把 s 右侧补空格到显示宽 cw(左对齐)。
-func padCell(s string, cw int) string {
-	pad := cw - escpos.DisplayWidth(s)
+// padCell 把 s 右侧补空格到列宽 cw(标准字格数),左对齐。
+// scale=当前字号宽度倍率:内容物理宽=DisplayWidth(s)*scale,格物理宽=cw*scale,
+// 故补足当前字号下的空格数=(cw-DisplayWidth(s))*scale,使格界物理对齐。
+func padCell(s string, cw, scale int) string {
+	pad := (cw - escpos.DisplayWidth(s)) * scale
 	if pad < 0 {
 		pad = 0
 	}

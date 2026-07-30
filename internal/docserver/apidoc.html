@@ -38,7 +38,7 @@
 <div class="wrap">
 
   <h1>聪明付票据打印服务器 · 接口文档</h1>
-  <p class="subtitle">云端／服务端与本服务之间的 MQTT 接口规范 · 文档版本 v1.14（2026-07-28）</p>
+  <p class="subtitle">云端／服务端与本服务之间的 MQTT 接口规范 · 文档版本 v1.16（2026-07-29）</p>
 
   <div class="notice">
     本页为只读接口文档。本服务不提供 HTTP 数据接口，数据通信全部经由 MQTT 完成。
@@ -65,7 +65,7 @@
   <table>
     <tr><th>项目</th><th>内容</th></tr>
     <tr><td>文档名称</td><td>聪明付票据打印服务器 接口文档</td></tr>
-    <tr><td>文档版本</td><td>v1.14</td></tr>
+    <tr><td>文档版本</td><td>v1.16</td></tr>
     <tr><td>发布日期</td><td>2026-07-28</td></tr>
     <tr><td>适用范围</td><td>云端／服务端与本服务（Windows 打印客户端）之间的 MQTT 接口对接</td></tr>
     <tr><td>维护约定</td><td>本页与仓库根目录《接口文档.md》内容保持同步</td></tr>
@@ -258,11 +258,11 @@
     <tr><th>字段</th><th>类型</th><th>必填</th><th>默认</th><th>说明</th></tr>
     <tr><td><code>thead</code></td><td>对象 或 字符串数组</td><td class="req">必填</td><td>—</td><td>对象 <code>{列名:"宽%"}</code>（保持书写顺序，渲染表头行）或字符串数组 <code>["宽%"]</code>（不渲染表头行）。每列宽度须为 1–100 的整数百分比（容忍 <code>%</code> 后缀与空白），<strong>总和必须恰为 100</strong></td></tr>
     <tr><td><code>tbody</code></td><td>二维数组</td><td class="opt">可选</td><td>空</td><td>数据行。每行单元格数必须等于列数；单元格仅接受字符串、数字、布尔（<code>null</code>、对象、数组拒绝）</td></tr>
-    <tr><td><code>size</code></td><td>字符串</td><td class="opt">可选</td><td>不放大</td><td>两位数字，规则同 text；表格取第一位作为宽高共同放大档</td></tr>
+    <tr><td><code>size</code></td><td>字符串</td><td class="opt">可选</td><td>不放大</td><td>两位数字，取第一位作为宽高共同放大档，仅作用于 <code>tbody</code> 数据行；表头行恒为不放大</td></tr>
     <tr><td><code>line_div</code></td><td>整数</td><td class="opt">可选</td><td>0</td><td>为 <code>1</code> 时每行之后输出一条 <code>-</code> 分割线</td></tr>
     <tr><td><code>line_space</code></td><td>整数</td><td class="opt">可选</td><td>0</td><td>每行之后额外走纸的行数</td></tr>
   </table>
-  <p>约束：有 <code>tbody</code> 而无 <code>thead</code> 拒绝。单元格内容超出列宽时按显示宽度自动换行（中文按 2 计）。</p>
+  <p>约束：有 <code>tbody</code> 而无 <code>thead</code> 拒绝。列宽按<strong>纸宽满行</strong>计算（58mm＝32 字符、80mm＝48 字符），<code>size</code> 放大不改变列数、仅放大字符；单元格内容超出列宽时按显示宽度自动换行（中文按 2 计）。</p>
   <pre><code>{"thead":{"商品名称":"70%","数量":"15%","金额":"15%"},
  "tbody":[["青椒肉丝（标准）","1份",0.01],["规格测试","1份",0.01]],"size":"00"}</code></pre>
   <h3>5.6 both_sides（左右两列）</h3>
@@ -522,10 +522,12 @@
     <tr><td>v1.12</td><td>2026-07-28</td><td>新增设置项「云盒兼容模式」（默认开启）：开启时接受 <code>type=5</code>、五字段可省略、contents 切纸元素，回执仅 <code>done</code>／<code>failed</code>；关闭时仅 <code>type</code> 0／1、五字段必填、回执含 <code>accepted</code>／<code>waiting</code></td></tr>
     <tr><td>v1.13</td><td>2026-07-28</td><td>文档修订：字段必填条件、回执 <code>failed</code>／<code>waiting</code> 行为陈述与实现对齐，统一云盒兼容模式表述</td></tr>
     <tr><td>v1.14</td><td>2026-07-28</td><td><code>gateway</code> 支持取值 <code>"usb"</code>：按本机已登记 USB 打印机配置顺序取第一台；本机无已登记 USB 时 <code>code=3003</code>；保留按名称／ID 指定 USB</td></tr>
+    <tr><td>v1.15</td><td>2026-07-29</td><td>表格 <code>size</code> 仅作用于 <code>tbody</code> 数据行；表头行恒为不放大</td></tr>
+    <tr><td>v1.16</td><td>2026-07-29</td><td>表格列宽按纸宽满行计算（58mm＝32 字符、80mm＝48 字符）；放大不改变列数、仅放大字符</td></tr>
   </table>
 
   <footer>
-    聪明付票据打印服务器 接口文档 v1.14 · 本页由本服务内置只读文档服务提供，与《接口文档.md》内容保持同步。
+    聪明付票据打印服务器 接口文档 v1.16 · 本页由本服务内置只读文档服务提供，与《接口文档.md》内容保持同步。
   </footer>
 
 </div>

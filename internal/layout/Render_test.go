@@ -287,3 +287,69 @@ func TestCloudFixturesPass(t *testing.T) {
 	mustOK(t, fixtureBill, 80)
 	mustOK(t, fixture58, 58)
 }
+
+// 表格表头恒为正常字,不随 size 放大;tbody 仍随 size 放大。
+// 用仅含该表格的 JSON:锁定 GS ! 0x11(放大)出现前必须已输出表头「商品名称」(GB18030),
+// 且放大区(GS ! 0x11 起,到下一 GS ! 0x00 止)内不得再出现表头内容。
+func TestTableHeaderNotMagnified(t *testing.T) {
+	tableOnly := `[{"size":"11","tbody":[["1.手工猪肉大葱小笼包(3个)","1笼"]],"thead":{"商品名称":"85%","数量":"15%"}}]`
+	data, _, err := Render([]byte(tableOnly), 80, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gsMagnify := []byte{0x1D, 0x21, 0x11}
+	gsNormal := []byte{0x1D, 0x21, 0x00}
+	headerGBK := []byte{0xC9, 0xCC, 0xC6, 0xB7, 0xC3, 0xFB, 0xB3, 0xC6} // "商品名称" GB18030
+
+	idxMag := bytes.Index(data, gsMagnify)
+	if idxMag < 0 {
+		t.Fatal("预期存在放大指令 GS ! 0x11")
+	}
+	idxHeader := bytes.Index(data, headerGBK)
+	if idxHeader < 0 {
+		t.Fatal("预期存在表头 商品名称")
+	}
+	if idxHeader >= idxMag {
+		t.Fatalf("表头须在放大指令之前输出: header@%d, magnify@%d", idxHeader, idxMag)
+	}
+	rest := data[idxMag+len(gsMagnify):]
+	idxReset := bytes.Index(rest, gsNormal)
+	if idxReset < 0 {
+		t.Fatal("预期存在恢复字号指令 GS ! 0x00")
+	}
+	if bytes.Contains(rest[:idxReset], headerGBK) {
+		t.Fatal("放大区间内不得再出现表头内容")
+	}
+}
+
+// 列宽按纸宽满行计算:58mm 下 85%/15% 分列为 [27,5](满行 32 字符),
+// 表头正常字一行内排下「商品名称」+「数量」,数量不再因列宽 3 而竖折。
+func TestTableColumnsFullPaperWidth58(t *testing.T) {
+	tableOnly := `[{"size":"11","tbody":[["1.手工猪肉大葱小笼包(3个)","1笼"]],"thead":{"商品名称":"85%","数量":"15%"}}]`
+	data, _, err := Render([]byte(tableOnly), 58, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gsMagnify := []byte{0x1D, 0x21, 0x11}
+	idxMag := bytes.Index(data, gsMagnify)
+	if idxMag < 0 {
+		t.Fatal("预期存在放大指令")
+	}
+	header := data[:idxMag]
+	// 表头行须同时含两列且「数量」与「商品名称」之间有大量补位(85% 列)
+	headerGBK := []byte{0xC9, 0xCC, 0xC6, 0xB7, 0xC3, 0xFB, 0xB3, 0xC6}
+	qtyGBK := []byte{0xCA, 0xFD, 0xC1, 0xBF} // "数量"
+	idxName := bytes.Index(header, headerGBK)
+	idxQty := bytes.Index(header, qtyGBK)
+	if idxName < 0 || idxQty < 0 {
+		t.Fatal("表头须含 商品名称 与 数量")
+	}
+	if idxQty <= idxName {
+		t.Fatal("数量应位于商品名称之后")
+	}
+	// 58mm: cpl=32 → 85% 列宽 27;表头正常字下商品名称占 8 显示宽,应补约 19 个空格
+	gap := idxQty - (idxName + len(headerGBK))
+	if gap < 10 {
+		t.Fatalf("85%% 列应有明显补位(gap=%d,预期约 19)", gap)
+	}
+}
