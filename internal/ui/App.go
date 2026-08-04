@@ -143,7 +143,7 @@ func (a *App) Run() error {
 	if err := (MainWindow{
 		AssignTo: &a.mw,
 		Title:    a.windowTitle(),
-		MinSize:  Size{Width: 900, Height: 620},
+		MinSize:  Size{Width: 720, Height: 480},
 		Size:     Size{Width: 1000, Height: 720},
 		Layout:   VBox{MarginsZero: true, SpacingZero: true},
 		Children: []Widget{
