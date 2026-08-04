@@ -1,0 +1,27 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        google()
+        mavenCentral()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        // 佳博 SDK 仓库
+        maven {
+            url = uri("http://118.31.6.84:8081/repository/maven-public/")
+            allowInsecureProtocol = true
+        }
+        maven { url = uri("https://maven.aliyun.com/nexus/content/groups/public/") }
+        // 佳博 SDK 本地 AAR（dirs 相对 settings 目录 = Android/ 根；FAIL_ON_PROJECT_REPOS 下项目内不可声明仓库）
+        flatDir {
+            dirs("app/libs")
+        }
+    }
+}
+
+rootProject.name = "congmingpay"
+include(":app")

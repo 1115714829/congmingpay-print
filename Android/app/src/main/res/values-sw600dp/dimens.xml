@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 平板 / 宽屏收款机 -->
+    <dimen name="toolbar_btn_min_height">52dp</dimen>
+    <dimen name="toolbar_btn_text_size">18sp</dimen>
+    <dimen name="toolbar_btn_padding_h">14dp</dimen>
+    <dimen name="content_padding">12dp</dimen>
+    <dimen name="list_item_margin_h">16dp</dimen>
+    <dimen name="card_padding">16dp</dimen>
+    <dimen name="label_text_size">15sp</dimen>
+    <dimen name="list_title_text_size">18sp</dimen>
+    <dimen name="list_body_text_size">15sp</dimen>
+</resources>

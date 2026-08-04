@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Congmingpay" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorPrimaryDark">@color/primary_dark</item>
+        <item name="colorAccent">@color/accent</item>
+        <item name="android:statusBarColor">@color/primary_dark</item>
+        <item name="android:navigationBarColor">@color/card_bg</item>
+        <item name="android:windowBackground">@color/surface</item>
+        <item name="bottomNavigationStyle">@style/Widget.Congmingpay.BottomNav</item>
+        <!-- 内容不画进系统栏；再配合 UiInsets 双保险 -->
+        <item name="android:fitsSystemWindows">false</item>
+    </style>
+
+    <style name="Widget.Congmingpay.BottomNav" parent="Widget.MaterialComponents.BottomNavigationView">
+        <item name="itemIconTint">@color/primary</item>
+        <item name="itemTextColor">@color/primary</item>
+        <item name="backgroundTint">@color/card_bg</item>
+        <item name="itemIconSize">22dp</item>
+        <item name="android:minHeight">48dp</item>
+    </style>
+
+    <!-- 工具栏按钮：厨房/收款机可读大字 -->
+    <style name="Widget.Congmingpay.ToolbarButton" parent="Widget.MaterialComponents.Button.TextButton">
+        <item name="android:minHeight">@dimen/toolbar_btn_min_height</item>
+        <item name="android:minWidth">@dimen/toolbar_btn_min_width</item>
+        <item name="android:paddingLeft">@dimen/toolbar_btn_padding_h</item>
+        <item name="android:paddingRight">@dimen/toolbar_btn_padding_h</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:textSize">@dimen/toolbar_btn_text_size</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:maxLines">1</item>
+    </style>
+
+    <style name="Widget.Congmingpay.ToolbarButton.Filled" parent="Widget.MaterialComponents.Button">
+        <item name="android:minHeight">@dimen/toolbar_btn_min_height</item>
+        <item name="android:minWidth">@dimen/toolbar_btn_min_width</item>
+        <item name="android:paddingLeft">@dimen/toolbar_btn_padding_h</item>
+        <item name="android:paddingRight">@dimen/toolbar_btn_padding_h</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:textSize">@dimen/toolbar_btn_text_size</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:maxLines">1</item>
+        <item name="cornerRadius">8dp</item>
+    </style>
+
+    <!-- 设置页/弹窗主操作按钮（全宽或大操作） -->
+    <style name="Widget.Congmingpay.PrimaryButton" parent="Widget.MaterialComponents.Button">
+        <item name="android:minHeight">@dimen/toolbar_btn_min_height</item>
+        <item name="android:textSize">@dimen/toolbar_btn_text_size</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="cornerRadius">8dp</item>
+    </style>
+
+    <style name="Widget.Congmingpay.PrimaryButton.Outlined" parent="Widget.MaterialComponents.Button.OutlinedButton">
+        <item name="android:minHeight">@dimen/toolbar_btn_min_height</item>
+        <item name="android:textSize">@dimen/toolbar_btn_text_size</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="cornerRadius">8dp</item>
+    </style>
+
+    <style name="Widget.Congmingpay.Card" parent="">
+        <item name="android:background">@drawable/bg_card</item>
+        <item name="android:padding">@dimen/card_padding</item>
+        <item name="android:layout_marginBottom">8dp</item>
+    </style>
+</resources>

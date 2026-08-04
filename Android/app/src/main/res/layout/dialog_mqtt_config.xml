@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="MQTT 配置"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary" />
+
+    <RadioGroup
+        android:id="@+id/rg_provider"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp">
+
+        <RadioButton
+            android:id="@+id/rb_provider_generic"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:checked="true"
+            android:text="自建" />
+
+        <RadioButton
+            android:id="@+id/rb_provider_aliyun"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="云消息队列" />
+
+        <RadioButton
+            android:id="@+id/rb_provider_iot"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="物联网平台" />
+    </RadioGroup>
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="320dp"
+        android:layout_marginTop="4dp"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:id="@+id/ll_generic"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <EditText android:id="@+id/et_broker" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="broker 地址（如 192.168.1.10）" />
+                <EditText android:id="@+id/et_mqtt_port" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="端口（默认 1883）" android:inputType="number" />
+                <EditText android:id="@+id/et_username" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="用户名（可选）" />
+                <EditText android:id="@+id/et_password" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="密码（可选）" android:inputType="textPassword" />
+                <EditText android:id="@+id/et_topic" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="短商户号（订阅主题）" />
+                <EditText android:id="@+id/et_report_topic" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="上报主题（发布主题）" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/ll_aliyun"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <EditText android:id="@+id/et_ali_endpoint" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="endpoint（云消息队列接入点）" />
+                <EditText android:id="@+id/et_ali_port" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="端口（默认 1883）" android:inputType="number" />
+                <EditText android:id="@+id/et_instance_id" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="instanceId（实例 ID）" />
+                <EditText android:id="@+id/et_access_key" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="AccessKey ID" />
+                <EditText android:id="@+id/et_secret_key" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="AccessKey Secret" android:inputType="textPassword" />
+                <EditText android:id="@+id/et_group_id" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="GroupId" />
+                <EditText android:id="@+id/et_parent_topic" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="父主题" />
+                <EditText android:id="@+id/et_device_id" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="自定义 ID（设备标识）" />
+                <EditText android:id="@+id/et_down_suffix" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="下行主题后缀（订阅）" />
+                <EditText android:id="@+id/et_up_suffix" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="上行主题后缀（发布）" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/ll_iot"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <EditText android:id="@+id/et_iot_pk" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="ProductKey" />
+                <EditText android:id="@+id/et_iot_dn" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="DeviceName" />
+                <EditText android:id="@+id/et_iot_ds" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="DeviceSecret" android:inputType="textPassword" />
+                <EditText android:id="@+id/et_iot_region" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="地域（默认 cn-shanghai）" />
+                <EditText android:id="@+id/et_iot_endpoint" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="endpoint（可选）" />
+                <EditText android:id="@+id/et_iot_port" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="端口（默认 1883）" android:inputType="number" />
+                <EditText android:id="@+id/et_iot_down" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="下行主题后缀（订阅）" />
+                <EditText android:id="@+id/et_iot_up" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="上行主题后缀（发布）" />
+            </LinearLayout>
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="8dp">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_test_conn"
+            style="@style/Widget.Congmingpay.PrimaryButton.Outlined"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="连接测试" />
+
+        <TextView
+            android:id="@+id/tv_mqtt_status"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:textSize="@dimen/label_text_size"
+            android:textColor="@color/text_secondary" />
+    </LinearLayout>
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_save_mqtt"
+        style="@style/Widget.Congmingpay.PrimaryButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="保存 MQTT" />
+
+</LinearLayout>

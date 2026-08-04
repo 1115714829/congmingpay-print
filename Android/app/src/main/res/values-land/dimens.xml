@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 横屏：略压高度，字号不低于可读下限 -->
+    <dimen name="toolbar_btn_min_height">44dp</dimen>
+    <dimen name="toolbar_btn_text_size">15sp</dimen>
+    <dimen name="toolbar_row_padding">6dp</dimen>
+    <dimen name="status_bar_text_size">12sp</dimen>
+</resources>

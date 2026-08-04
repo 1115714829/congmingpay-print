@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="420dp"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="JSON 测试"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="本地直通 PrintProcessor，等价 MQTT 下发"
+        android:textSize="12sp"
+        android:textColor="@color/text_secondary" />
+
+    <EditText
+        android:id="@+id/et_json"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="8dp"
+        android:minHeight="160dp"
+        android:background="@android:drawable/editbox_background"
+        android:fontFamily="monospace"
+        android:gravity="top"
+        android:hint="{&quot;printer&quot;:{&quot;ip&quot;:&quot;192.168.1.100&quot;},&quot;type&quot;:0,&quot;contents&quot;:[{&quot;cont&quot;:&quot;测试&quot;,&quot;type&quot;:&quot;text&quot;}]}"
+        android:inputType="textMultiLine"
+        android:textSize="12sp" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_submit"
+        style="@style/Widget.Congmingpay.PrimaryButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="提交" />
+
+    <TextView
+        android:id="@+id/tv_result"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:minHeight="80dp"
+        android:fontFamily="monospace"
+        android:textColor="@color/text_primary"
+        android:textSize="@dimen/label_text_size" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_close"
+        style="@style/Widget.Congmingpay.ToolbarButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="关闭" />
+
+</LinearLayout>

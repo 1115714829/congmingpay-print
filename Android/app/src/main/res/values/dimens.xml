@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="toolbar_btn_min_height">48dp</dimen>
+    <dimen name="toolbar_btn_min_width">56dp</dimen>
+    <dimen name="toolbar_btn_padding_h">12dp</dimen>
+    <dimen name="toolbar_btn_text_size">16sp</dimen>
+    <dimen name="toolbar_row_padding">8dp</dimen>
+    <dimen name="content_padding">8dp</dimen>
+    <dimen name="status_bar_text_size">13sp</dimen>
+    <dimen name="nav_rail_width">80dp</dimen>
+    <dimen name="card_padding">14dp</dimen>
+    <dimen name="list_item_margin_h">8dp</dimen>
+    <dimen name="label_text_size">14sp</dimen>
+    <dimen name="list_title_text_size">16sp</dimen>
+    <dimen name="list_body_text_size">14sp</dimen>
+</resources>

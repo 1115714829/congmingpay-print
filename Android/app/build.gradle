@@ -1,0 +1,82 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "com.congmingpay.android"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "com.congmingpay.android"
+        minSdk = 21
+        targetSdk = 35
+        versionCode = 1
+        versionName = "1.0.0"
+    }
+
+    buildTypes {
+        release {
+            // Groovy DSL：minifyEnabled（isMinifyEnabled 是 Kotlin DSL 写法，Groovy 下 AGP 无此属性）
+            minifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+
+    buildFeatures {
+        viewBinding = true
+    }
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+}
+
+dependencies {
+    // 佳博 SDK
+    implementation(files("libs/sdk2.aar"))
+    // SDK 传递依赖（AAR 不自带）
+    implementation("com.gainscha:serial-port:2.1.3")
+    implementation("com.gainscha:jzint:0.4.1")
+    implementation("com.gainscha:fimage:1.0.0")
+    implementation("com.jcraft:jzlib:1.1.3")
+
+    // AndroidX
+    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    implementation("androidx.recyclerview:recyclerview:1.3.1")
+    implementation("androidx.lifecycle:lifecycle-service:2.6.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.1")
+    implementation("com.google.android.material:material:1.9.0")
+
+    // MQTT
+    implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
+
+    // JSON
+    implementation("com.google.code.gson:gson:2.10.1")
+
+    // 网络（png 下载）
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+
+    // 二维码
+    implementation("com.google.zxing:core:3.5.1")
+
+    // Kotlin coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4")
+
+    // 单元测试（JVM，纯逻辑：在线防抖、上报报文构造）
+    testImplementation("junit:junit:4.13.2")
+}

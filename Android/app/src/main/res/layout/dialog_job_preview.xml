@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:minWidth="320dp"
+    android:padding="16dp">
+
+    <TextView
+        android:id="@+id/tv_job_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="#333333" />
+
+    <TextView
+        android:id="@+id/tv_job_info"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:textSize="13sp"
+        android:textColor="#666666" />
+
+    <TextView
+        android:id="@+id/tv_json_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="JSON 原文"
+        android:textSize="13sp"
+        android:textColor="#666666"
+        android:visibility="gone" />
+
+    <EditText
+        android:id="@+id/tv_json"
+        android:layout_width="match_parent"
+        android:layout_height="220dp"
+        android:layout_marginTop="4dp"
+        android:background="@android:drawable/editbox_background"
+        android:fontFamily="monospace"
+        android:gravity="top"
+        android:inputType="textMultiLine"
+        android:maxLines="12"
+        android:scrollbars="vertical"
+        android:textIsSelectable="true"
+        android:textSize="11sp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="horizontal"
+        android:gravity="end">
+
+        <Button
+            android:id="@+id/btn_preview_retry"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:text="重新打印" />
+
+        <Button
+            android:id="@+id/btn_preview_close"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:text="关闭" />
+
+    </LinearLayout>
+
+</LinearLayout>

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 横屏 / 收款机：左侧导航轨，右侧内容，避免底栏占高度、与系统栏打架 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:background="@color/surface">
+
+    <com.google.android.material.navigationrail.NavigationRailView
+        android:id="@+id/main_nav"
+        android:layout_width="@dimen/nav_rail_width"
+        android:layout_height="match_parent"
+        android:background="@color/card_bg"
+        app:menu="@menu/bottom_nav_menu"
+        app:labelVisibilityMode="labeled"
+        app:menuGravity="center" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <FrameLayout
+            android:id="@+id/content_frame"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/status_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="@dimen/content_padding"
+            android:paddingEnd="@dimen/content_padding"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:background="@color/status_bar_bg"
+            android:textColor="@color/text_secondary"
+            android:textSize="@dimen/status_bar_text_size"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="共 0 台 · 0 在线 · 0 任务进行中" />
+    </LinearLayout>
+
+</LinearLayout>
