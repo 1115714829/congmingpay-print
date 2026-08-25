@@ -43,9 +43,9 @@ func (r *renderer) title(e *Element) error {
 	if err != nil {
 		return err
 	}
-	r.b.SetAlign(escpos.AlignCenter).SetEmphasize(true).SetSize(1, 1).
+	r.b.SetAlign(escpos.AlignCenter).SetSize(1, 1).
 		Line(s).
-		SetSize(0, 0).SetEmphasize(false).SetAlign(escpos.AlignLeft)
+		SetSize(0, 0).SetAlign(escpos.AlignLeft)
 	return nil
 }
 
@@ -57,9 +57,17 @@ func (r *renderer) text(e *Element) error {
 	if err != nil {
 		return err
 	}
-	s, err := e.contString()
+	arr, err := e.contArray()
 	if err != nil {
 		return err
+	}
+	lines := arr
+	if arr == nil {
+		s, err := e.contString()
+		if err != nil {
+			return err
+		}
+		lines = []string{s}
 	}
 	if e.Bold {
 		r.b.SetEmphasize(true)
@@ -67,7 +75,9 @@ func (r *renderer) text(e *Element) error {
 	if w > 0 || h > 0 {
 		r.b.SetSize(w, h)
 	}
-	r.b.Line(s)
+	for _, ln := range lines {
+		r.b.Line(ln)
+	}
 	r.b.SetSize(0, 0)
 	if e.Bold {
 		r.b.SetEmphasize(false)

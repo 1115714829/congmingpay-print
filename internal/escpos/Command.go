@@ -75,6 +75,20 @@ func (b *Builder) Feed(n int) *Builder {
 	return b
 }
 
+// FeedDots 走纸 n 点(ESC J n;垂直方向 8 点=1mm)。n<=0 不输出;超 255 按 255。
+func (b *Builder) FeedDots(n int) *Builder {
+	if n <= 0 {
+		return b
+	}
+	return b.raw(0x1B, 0x4A, clampByte(n, 0, 255))
+}
+
+// CashDrawer 触发钱箱脉冲(ESC p m t1 t2);m=0 选引脚 2、1 选引脚 5。
+// t1/t2 为脉冲时间(单位 2ms),按 25/25(50ms)输出。
+func (b *Builder) CashDrawer(m int) *Builder {
+	return b.raw(0x1B, 0x70, boolByte(m == 1), 25, 25)
+}
+
 // Bytes 返回累积的字节;过程中若出错则返回该错误。
 func (b *Builder) Bytes() ([]byte, error) {
 	if b.err != nil {

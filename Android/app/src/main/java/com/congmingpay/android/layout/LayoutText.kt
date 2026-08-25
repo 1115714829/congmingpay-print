@@ -34,18 +34,21 @@ internal fun sizeMag(size: String): Pair<Int, Int> {
 
 internal fun Renderer.title(e: JsonObject) {
     val s = e.contString()
-    builder.setAlign(ALIGN_CENTER).setEmphasize(true).setSize(1, 1)
+    builder.setAlign(ALIGN_CENTER).setSize(1, 1)
         .line(s)
-        .setSize(0, 0).setEmphasize(false).setAlign(ALIGN_LEFT)
+        .setSize(0, 0).setAlign(ALIGN_LEFT)
 }
 
 internal fun Renderer.text(e: JsonObject) {
     applyAlign(e.strOr("align", ""))
     val (w, h) = sizeMag(e.strOr("size", ""))
-    val s = e.contString()
+    val arr = e.contArray()
+    val lines = arr ?: listOf(e.contString())
     if (e.boolOr("bold", false)) builder.setEmphasize(true)
     if (w > 0 || h > 0) builder.setSize(w, h)
-    builder.line(s)
+    for (ln in lines) {
+        builder.line(ln)
+    }
     builder.setSize(0, 0)
     if (e.boolOr("bold", false)) builder.setEmphasize(false)
     builder.setAlign(ALIGN_LEFT)

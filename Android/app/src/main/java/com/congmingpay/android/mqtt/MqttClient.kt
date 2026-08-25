@@ -32,7 +32,9 @@ class MqttClient(
     private val cfg: ConfigManager,
     private val svc: PrintDispatcher,
     private val onChange: () -> Unit,
-    private val onStatus: (connected: Boolean, error: String?) -> Unit
+    private val onStatus: (connected: Boolean, error: String?) -> Unit,
+    /** 打印受理失败告警（解析失败 / Process 失败 / 未知 query）；任意线程 */
+    private val onAcceptFailed: (id: Long, code: Int, message: String) -> Unit = { _, _, _ -> }
 ) {
     private val gson = Gson()
     private val executor = Executors.newSingleThreadExecutor()
@@ -199,10 +201,11 @@ class MqttClient(
                     } else {
                         Logger.warn("MQTT 未知 query: $q")
                         // 对齐 Windows Client.go
+                        val msg = """不支持的 query: $q(支持 "printers")"""
                         publishReportFailed(
-                            r, 0L, ErrCode.UNSUPPORTED_QUERY,
-                            """不支持的 query: $q(支持 "printers")"""
+                            r, 0L, ErrCode.UNSUPPORTED_QUERY, msg
                         )
+                        onAcceptFailed(0L, ErrCode.UNSUPPORTED_QUERY, msg)
                     }
                     return
                 }
@@ -213,10 +216,11 @@ class MqttClient(
             if (err != null) {
                 Logger.error("MQTT 解析打印请求失败: ${err.message}")
                 // 对齐 Windows: Message: "解析失败: " + err.Error()
+                val msg = "解析失败: " + (err.message ?: "")
                 publishReportFailed(
-                    r, 0L, ErrCode.PARSE_FAILED,
-                    "解析失败: " + (err.message ?: "")
+                    r, 0L, ErrCode.PARSE_FAILED, msg
                 )
+                onAcceptFailed(0L, ErrCode.PARSE_FAILED, msg)
                 return
             }
 
@@ -232,8 +236,10 @@ class MqttClient(
                     Logger.info("MQTT 打印请求已受理: id=${req.id} 任务#${result.jobNo}")
                 } catch (e: Exception) {
                     val code = errorCode(e)
-                    Logger.error("MQTT 处理打印请求失败: id=${req.id} code=$code ${e.message}")
-                    publishReportFailed(r, req.id, code, e.message ?: "")
+                    val msg = e.message ?: ""
+                    Logger.error("MQTT 处理打印请求失败: id=${req.id} code=$code $msg")
+                    publishReportFailed(r, req.id, code, msg)
+                    onAcceptFailed(req.id, code, msg)
                 }
             }
         } catch (e: Exception) {

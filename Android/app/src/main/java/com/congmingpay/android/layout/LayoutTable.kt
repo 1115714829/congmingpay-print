@@ -61,17 +61,21 @@ internal fun Renderer.table(e: JsonObject) {
         tableRow(cells, cols, scale)
         if (e.intOr("line_div", 0) == 1) builder.line("-".repeat(cpl))
         val lineSpace = e.intOr("line_space", 0)
-        repeat(lineSpace) { builder.feed(1) }
+        if (lineSpace > 0) builder.feedDots(lineSpace) // ESC J n 点数(8 点=1mm)
     }
     if (w > 0) builder.setSize(0, 0)
 }
 
 private fun Renderer.tableRow(cells: List<String>, cols: IntArray, scale: Int) {
+    // 放大 scale 倍后，每列可容纳的字符列宽 = 物理列宽 / scale
+    // （GS ! 放大对空格同样生效，故 padding 直接按放大后字符数补，不再 ×scale；
+    //  否则整行物理宽度会远超纸宽触发打印机自动换行——见 size:"11" 表格 bug）
+    val eff = IntArray(cols.size) { cols[it] / scale }
     val wrapped = ArrayList<List<String>>(cols.size)
     var maxLines = 1
     for (i in cols.indices) {
         val cell = if (i < cells.size) cells[i] else ""
-        val lines = wrapByWidth(cell, cols[i])
+        val lines = wrapByWidth(cell, eff[i])
         wrapped.add(lines)
         if (lines.size > maxLines) maxLines = lines.size
     }
@@ -79,14 +83,14 @@ private fun Renderer.tableRow(cells: List<String>, cols: IntArray, scale: Int) {
         val sb = StringBuilder()
         for (i in cols.indices) {
             val seg = if (ln < wrapped[i].size) wrapped[i][ln] else ""
-            sb.append(padCell(seg, cols[i], scale))
+            sb.append(padCell(seg, eff[i]))
         }
-        builder.setAlign(ALIGN_LEFT).line(sb.toString().trimEnd())
+        builder.setAlign(ALIGN_LEFT).line(sb.toString())
     }
 }
 
-private fun padCell(s: String, cw: Int, scale: Int): String {
-    var pad = (cw - Layout.displayWidth(s)) * scale
+private fun padCell(s: String, cw: Int): String {
+    var pad = cw - Layout.displayWidth(s)
     if (pad < 0) pad = 0
     return s + " ".repeat(pad)
 }

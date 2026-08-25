@@ -88,10 +88,15 @@ class EscposBuilder {
     }
 
     // —— CODE128 条码（GS k 73）——
-    // 前置 "{B" 选码集 B。hri：0=无 1=上方 2=下方 3=上下
-    fun code128(data: String, heightDots: Int, moduleWidth: Int, hri: Int): EscposBuilder {
+    // codeset 为码集标识：'A'/'B'/'C'，经 "{A"/"{B"/"{C" 前缀选择。
+    // hri：0=无 1=上方 2=下方 3=上下
+    fun code128(data: String, codeset: Char, heightDots: Int, moduleWidth: Int, hri: Int): EscposBuilder {
         barcodePrep(heightDots, moduleWidth, hri)
-        val payload = "{B$data"
+        val payload = when (codeset) {
+            'A' -> "{A$data"
+            'C' -> "{C$data"
+            else -> "{B$data"
+        }
         val pb = payload.toByteArray(Charsets.US_ASCII)
         raw(0x1D, 0x6B, 73, pb.size)
         buf.write(pb)
@@ -106,6 +111,15 @@ class EscposBuilder {
         buf.write(db)
         return this
     }
+
+    /** 走纸 n 点（ESC J n；8 点=1mm）；n≤0 不输出 */
+    fun feedDots(n: Int): EscposBuilder {
+        if (n <= 0) return this
+        return raw(0x1B, 0x4A, clampByte(n, 0, 255).toInt())
+    }
+
+    /** 触发钱箱脉冲（ESC p m t1 t2）；m=0 引脚 2、1 引脚 5；脉冲时间 25×2ms */
+    fun cashDrawer(m: Int): EscposBuilder = raw(0x1B, 0x70, if (m == 1) 1 else 0, 25, 25)
 
     private fun barcodePrep(heightDots: Int, moduleWidth: Int, hri: Int) {
         raw(0x1D, 0x48, clampByte(hri, 0, 3).toInt())           // GS H：HRI 位置

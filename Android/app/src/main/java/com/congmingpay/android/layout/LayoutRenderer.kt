@@ -79,7 +79,6 @@ internal class Renderer(widthMM: Int, val compat: Boolean) {
     val builder = EscposBuilder()
     val width = widthMM
     val cpl = Layout.charsPerLine(widthMM)
-    var qrSizeWarned = false
     var contentCut: Boolean? = null
 
     fun element(e: JsonObject) {
@@ -102,20 +101,24 @@ internal class Renderer(widthMM: Int, val compat: Boolean) {
             "div_line" -> divider(e, "-")
             "div_star" -> divider(e, "*")
             "qrcode" -> qrcode(e)
-            "bc128" -> barcode(e, "128")
-            "code39" -> barcode(e, "39")
+            "bc128" -> barcode(e, "bc128")
+            "bc128a" -> barcode(e, "bc128a")
+            "bc128c" -> barcode(e, "bc128c")
+            "code39" -> barcode(e, "code39")
             "png" -> png(e)
+            "bmp" -> bmp(e)
+            "plugin" -> plugin(e)
             "cut" -> {
                 if (!compat) {
-                    throw RuntimeException("未知元素 type \"$type\"(支持 text/title/div_line/div_star/qrcode/bc128/code39/png)")
+                    throw RuntimeException("未知元素 type \"$type\"(支持 text/title/div_line/div_star/qrcode/bc128/bc128a/bc128c/code39/png/bmp/plugin)")
                 }
                 contentCut = parseCutCont(e)
             }
             else -> {
                 val sup = if (compat)
-                    "text/title/div_line/div_star/qrcode/bc128/code39/png/cut"
+                    "text/title/div_line/div_star/qrcode/bc128/bc128a/bc128c/code39/png/bmp/plugin/cut"
                 else
-                    "text/title/div_line/div_star/qrcode/bc128/code39/png"
+                    "text/title/div_line/div_star/qrcode/bc128/bc128a/bc128c/code39/png/bmp/plugin"
                 throw RuntimeException("未知元素 type \"$type\"(支持 $sup)")
             }
         }
@@ -151,7 +154,7 @@ internal fun kindOf(e: JsonObject): String {
     return if (t.isEmpty()) "text" else t
 }
 
-/** C3: cut 元素解析 cont 为 1/0/true/false */
+/** C3: cut 元素 cont "0"=全切、"1"=半切,均触发切纸;0/1 与 true → 切;false/"off" → 不切 */
 internal fun parseCutCont(e: JsonObject): Boolean {
     if (!e.has("cont")) return true
     val v = e.get("cont")
@@ -161,16 +164,44 @@ internal fun parseCutCont(e: JsonObject): Boolean {
         if (p.isBoolean) return p.asBoolean
         if (p.isNumber) {
             val n = p.asInt
-            if (n == 0 || n == 1) return n == 1
+            if (n == 0 || n == 1) return true
             throw RuntimeException("cut.cont 需为 0 或 1")
         }
         if (p.isString) {
             return when (p.asString.trim()) {
-                "1", "true", "on" -> true
-                "0", "false", "off" -> false
+                "1", "0", "true", "on" -> true
+                "false", "off" -> false
                 else -> throw RuntimeException("cut.cont 需为 0 或 1")
             }
         }
     }
     throw RuntimeException("cut.cont 需为 0 或 1")
+}
+
+/** plugin 开钱箱:cont "0"/"1" 选引脚(0=引脚 2、1=引脚 5);缺失 → 引脚 2 */
+internal fun parsePluginPin(e: JsonObject): Int {
+    if (!e.has("cont")) return 0
+    val v = e.get("cont")
+    if (v.isJsonNull) return 0
+    if (v.isJsonPrimitive) {
+        val p = v.asJsonPrimitive
+        if (p.isNumber) {
+            val n = p.asInt
+            if (n == 0 || n == 1) return n
+            throw RuntimeException("plugin.cont 需为 0 或 1")
+        }
+        if (p.isString) {
+            return when (p.asString.trim()) {
+                "0" -> 0
+                "1" -> 1
+                else -> throw RuntimeException("plugin.cont 需为 0 或 1")
+            }
+        }
+    }
+    throw RuntimeException("plugin.cont 需为 0 或 1")
+}
+
+/** plugin 开钱箱:发出 ESC p 脉冲指令 */
+internal fun Renderer.plugin(e: JsonObject) {
+    builder.cashDrawer(parsePluginPin(e))
 }

@@ -79,6 +79,7 @@ data class Settings(
     var serviceName: String = "票据打印服务",
     var notifyDisabled: Boolean = false,        // 反向字段，零值=启用
     var yunheCompatDisabled: Boolean = false,   // 反向字段，零值=兼容开（C1–C4）
+    var bootStartEnabled: Boolean = true,       // 开机启动打印服务（厨房机默认开）
     var jobHistoryDays: Int = DEFAULT_JOB_HISTORY_DAYS,
     var mqtt: MqttConfig = MqttConfig(),
     var docServer: DocServerConfig = DocServerConfig()

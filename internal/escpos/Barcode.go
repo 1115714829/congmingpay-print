@@ -1,10 +1,17 @@
 package escpos
 
-// Code128 打印 CODE128 条码(GS k 73)。前置 "{B" 选码集 B。
+// Code128 打印 CODE128 条码(GS k 73)。codeset 为码集标识('A'/'B'/'C'),
+// 经 "{A"/"{B"/"{C" 前缀选择;其余值按 'B' 处理。
 // hri(人眼可读字符位置,GS H n):0=无 1=上方 2=下方 3=上下,超范围夹取。
-func (b *Builder) Code128(data string, heightDots, moduleWidth, hri int) *Builder {
+func (b *Builder) Code128(data string, codeset byte, heightDots, moduleWidth, hri int) *Builder {
 	b.barcodePrep(heightDots, moduleWidth, hri)
 	payload := "{B" + data
+	switch codeset {
+	case 'A':
+		payload = "{A" + data
+	case 'C':
+		payload = "{C" + data
+	}
 	b.raw(0x1D, 0x6B, 73, byte(len(payload)))
 	if b.err == nil {
 		b.buf.WriteString(payload)

@@ -21,6 +21,8 @@ import com.congmingpay.android.printer.PrintOptions
 import com.congmingpay.android.printer.StatusMonitor
 import com.congmingpay.android.printer.injectDeviceResolvers
 import com.congmingpay.android.store.JobStore
+import com.congmingpay.android.ui.AlertModel
+import com.congmingpay.android.ui.AlertOverlay
 import com.congmingpay.android.ui.Notify
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -78,6 +80,7 @@ class PrintService : Service() {
     private lateinit var dispatcher: PrintDispatcher
     private lateinit var mqtt: MqttClient
     private lateinit var statusMonitor: StatusMonitor
+    private var alertOverlay: AlertOverlay? = null
 
     // —— UI 监听与通知状态 ——
     private val uiListeners = CopyOnWriteArrayList<UiListener>()
@@ -131,7 +134,8 @@ class PrintService : Service() {
             cfg = cfg,
             svc = dispatcher,
             onChange = { notifyPrintersChanged() },
-            onStatus = { connected, error -> onMqttStatusInternal(connected, error) }
+            onStatus = { connected, error -> onMqttStatusInternal(connected, error) },
+            onAcceptFailed = { id, code, message -> onAcceptFailedInternal(id, code, message) }
         )
 
         // 重启恢复未完成任务 + 清理超期历史
@@ -144,7 +148,9 @@ class PrintService : Service() {
             cfg = cfg,
             dispatcher = dispatcher,
             onLabelChange = { _, _, _ -> notifyUi { it.onPrintersChanged() } },
-            onBoolEdge = { id, online, detail -> onPrinterEdgeInternal(id, online, detail) }
+            onBoolEdge = { id, online, detail, failFirst, sinceMs, baseline ->
+                onPrinterEdgeInternal(id, online, detail, failFirst, sinceMs, baseline)
+            }
         )
 
         // 启动（destroyed 复查先于 mqtt.start：start 入队的异步 connect 由 close 的 enabled 守卫拦截）
@@ -152,6 +158,14 @@ class PrintService : Service() {
         if (destroyed) { statusMonitor.stopAll(); mqtt.close(); dispatcher.close(); return }
         mqtt.start()
         initReady = true
+
+        // 悬浮告警球（需悬浮窗权限；无权限则静默）
+        mainHandler.post {
+            if (destroyed) return@post
+            val overlay = AlertOverlay(applicationContext)
+            alertOverlay = overlay
+            overlay.attach()
+        }
 
         // 刷新通知标题为服务名
         refreshNotificationTitle()
@@ -244,7 +258,16 @@ class PrintService : Service() {
         initScope.launch {
             if (::cfg.isInitialized) cfg.removePrinter(id)
             lastOnline.remove(id)
+            alertOverlay?.resolve(AlertModel.KIND_PRINTER_OFFLINE, id)
             notifyPrintersChanged()
+        }
+    }
+
+    /** 悬浮窗权限刚授予后由 UI 调用，补挂告警球 */
+    fun refreshAlertOverlay() {
+        mainHandler.post {
+            val overlay = alertOverlay ?: AlertOverlay(applicationContext).also { alertOverlay = it }
+            overlay.refreshPermission()
         }
     }
 
@@ -291,22 +314,35 @@ class PrintService : Service() {
     // —— 事件处理 ——
 
     private fun onJobEvent(ev: com.congmingpay.android.printer.JobEvent) {
+        val key = ev.jobNo.toString()
         when (ev.event) {
             "done" -> {
                 // 写入上次打印时间
                 val time = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
                     .format(java.util.Date())
                 cfg.updateLastPrint(ev.printer.id, time)
+                alertOverlay?.resolve(AlertModel.KIND_JOB_WAITING, key)
                 notifyUi { it.onJobsChanged() }
             }
             "failed" -> {
                 Logger.error("任务 #${ev.jobNo} 失败: ${ev.err}")
-                Notify.error(this, "打印失败", "任务 #${ev.jobNo} 失败: ${ev.err.ifBlank { "打印失败" }}")
+                val txt = "任务#${ev.jobNo} 打印机『${ev.printer.name}』:${ev.err}"
+                Notify.error(this, "打印失败", txt)
+                alertOverlay?.resolve(AlertModel.KIND_JOB_WAITING, key)
+                alertOverlay?.raise(
+                    AlertModel.KIND_JOB_FAILED, key, AlertModel.SEV_ERROR,
+                    "打印失败 $txt"
+                )
                 notifyUi { it.onJobsChanged() }
             }
             "waiting" -> {
                 Logger.warn("任务 #${ev.jobNo} 长期等待: ${ev.err}")
+                val txt = "任务#${ev.jobNo} 打印机『${ev.printer.name}』:${ev.err}"
                 Notify.warn(this, "打印卡单", "任务 #${ev.jobNo} 等待重试: ${ev.err.ifBlank { "持续连接失败" }}")
+                alertOverlay?.raise(
+                    AlertModel.KIND_JOB_WAITING, key, AlertModel.SEV_WARN,
+                    "长时间等待 $txt"
+                )
                 notifyUi { it.onJobsChanged() }
             }
         }
@@ -316,26 +352,55 @@ class PrintService : Service() {
         }
     }
 
-    /** 打印机生效布尔边沿：基线静默，此后离线/恢复弹通知 */
-    private fun onPrinterEdgeInternal(id: String, online: Boolean, detail: String) {
-        val prev = lastOnline[id]
+    /**
+     * 打印机生效布尔边沿。
+     * 基线静默只免系统通知：基线离线仍进告警窗，基线在线仍 resolve。
+     */
+    private fun onPrinterEdgeInternal(
+        id: String,
+        online: Boolean,
+        detail: String,
+        failFirst: String,
+        sinceMs: Long,
+        baseline: Boolean
+    ) {
         lastOnline[id] = online
         notifyUi { it.onPrintersChanged() }
 
-        // 基线状态（启动/监测重建首拍）：只记基线不弹通知
-        if (prev == null) {
-            Logger.info("打印机 $id 基线: ${if (online) "在线" else "离线"} $detail")
+        val p = cfg.findPrinter(id)
+        if (online) {
+            alertOverlay?.resolve(AlertModel.KIND_PRINTER_OFFLINE, id)
+            if (!baseline && p != null) {
+                Logger.info("打印机『${p.name}』上线")
+                Notify.info(this, "打印机上线", "『${p.name}』已恢复连接")
+            } else if (baseline) {
+                Logger.info("打印机 $id 基线: 在线 $detail")
+            }
             return
         }
-        if (prev == online) return
-        val p = cfg.findPrinter(id) ?: return
-        if (online) {
-            Logger.info("打印机『${p.name}』上线")
-            Notify.info(this, "打印机上线", "『${p.name}』已恢复连接")
+
+        // 离线
+        val name = p?.name ?: id
+        val addr = p?.address() ?: ""
+        val first = failFirst.ifBlank { detail }
+        alertOverlay?.raise(
+            AlertModel.KIND_PRINTER_OFFLINE, id, AlertModel.SEV_ERROR,
+            "打印机离线 『$name』$addr($first)",
+            sinceMs
+        )
+        if (baseline) {
+            Logger.info("打印机 $id 基线: 离线 $detail")
         } else {
-            Logger.warn("打印机『${p.name}』离线: $detail")
-            Notify.warn(this, "打印机离线", "『${p.name}』${if (detail.isBlank()) "已离线" else detail}")
+            Logger.warn("打印机『$name』离线: $detail")
+            Notify.warn(this, "打印机离线", "『$name』${if (detail.isBlank()) "已离线" else detail}")
         }
+    }
+
+    /** MQTT 受理失败 → 告警窗（无自动消除） */
+    private fun onAcceptFailedInternal(id: Long, code: Int, message: String) {
+        val key = if (id == 0L) "t${System.nanoTime()}" else id.toString()
+        val txt = "云端打印受理失败 id=$id code=$code: $message"
+        alertOverlay?.raise(AlertModel.KIND_ACCEPT_FAILED, key, AlertModel.SEV_ERROR, txt)
     }
 
     /** MQTT 状态回调：状态机去重 + 基线静默 + 断/连通知 */
@@ -346,6 +411,7 @@ class PrintService : Service() {
             // 中性态（未启用/已停用）：Close/reload 不触发 onStatus，靠此重置
             mqttNotifyState = 0
             mqttBaselineDone = false
+            alertOverlay?.resolve(AlertModel.KIND_MQTT_DOWN, "")
             return
         }
         val newState = if (connected) 1 else 2
@@ -360,9 +426,15 @@ class PrintService : Service() {
         if (connected) {
             Logger.info("MQTT 连接恢复")
             Notify.info(this, "云端连接恢复", "MQTT 已连接")
+            alertOverlay?.resolve(AlertModel.KIND_MQTT_DOWN, "")
         } else {
             Logger.warn("MQTT 连接断开: $error")
-            Notify.warn(this, "云端连接断开", error ?: "MQTT 连接断开")
+            val detail = error ?: "MQTT 连接断开"
+            Notify.warn(this, "云端连接断开", detail)
+            alertOverlay?.raise(
+                AlertModel.KIND_MQTT_DOWN, "", AlertModel.SEV_ERROR,
+                "云端连接断开:$detail"
+            )
         }
     }
 
@@ -378,6 +450,10 @@ class PrintService : Service() {
         destroyed = true
         initScope.cancel()
         uiListeners.clear()
+        mainHandler.post {
+            alertOverlay?.detach()
+            alertOverlay = null
+        }
         if (::statusMonitor.isInitialized) statusMonitor.stopAll()
         if (::mqtt.isInitialized) mqtt.close()
         if (::dispatcher.isInitialized) dispatcher.close()
@@ -413,7 +489,7 @@ class PrintService : Service() {
     private fun buildNotification(title: String): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
-            .setContentText("打印服务运行中")
+            .setContentText("打印服务运行中 · 点悬浮球可看告警")
             .setSmallIcon(android.R.drawable.ic_menu_manage)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

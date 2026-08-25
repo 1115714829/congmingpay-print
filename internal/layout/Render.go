@@ -37,12 +37,11 @@ func Render(contents []byte, widthMM int, compat bool) (data []byte, contentCut 
 }
 
 type renderer struct {
-	b            *escpos.Builder
-	width        int
-	cpl          int
-	qrSizeWarned bool
-	yunheCompat  bool  // 云盒兼容:允许 contents cut
-	contentCut   *bool // 切纸意图(仅 compat)
+	b           *escpos.Builder
+	width       int
+	cpl         int
+	yunheCompat bool  // 云盒兼容:允许 contents cut
+	contentCut  *bool // 切纸意图(仅 compat)
 }
 
 func (r *renderer) element(e *Element) error {
@@ -66,14 +65,22 @@ func (r *renderer) element(e *Element) error {
 	case "qrcode":
 		return r.qrcode(e)
 	case "bc128":
-		return r.barcode(e, "128")
+		return r.barcode(e, "bc128")
+	case "bc128a":
+		return r.barcode(e, "bc128a")
+	case "bc128c":
+		return r.barcode(e, "bc128c")
 	case "code39":
-		return r.barcode(e, "39")
+		return r.barcode(e, "code39")
 	case "png":
 		return r.png(e)
+	case "bmp":
+		return r.bmp(e)
+	case "plugin":
+		return r.plugin(e)
 	case "cut": // 云盒兼容 C3:接受不拒;不写 GS V,只记切纸意图
 		if !r.yunheCompat {
-			return fmt.Errorf("未知元素 type %q(支持 text/title/div_line/div_star/qrcode/bc128/code39/png)", e.Type)
+			return fmt.Errorf("未知元素 type %q(支持 text/title/div_line/div_star/qrcode/bc128/bc128a/bc128c/code39/png/bmp/plugin)", e.Type)
 		}
 		on, err := parseCutCont(e)
 		if err != nil {
@@ -82,7 +89,7 @@ func (r *renderer) element(e *Element) error {
 		r.contentCut = &on
 		return nil
 	default:
-		sup := "text/title/div_line/div_star/qrcode/bc128/code39/png"
+		sup := "text/title/div_line/div_star/qrcode/bc128/bc128a/bc128c/code39/png/bmp/plugin"
 		if r.yunheCompat {
 			sup += "/cut"
 		}
@@ -90,7 +97,9 @@ func (r *renderer) element(e *Element) error {
 	}
 }
 
-// parseCutCont LegacyCompat C3: cont 为 1/"1"/true → 切;0/"0"/false → 不切;缺失 → 切。
+// parseCutCont LegacyCompat C3: cont 为 "0"=全切、"1"=半切,两者均触发切纸
+// (意图交 Finish 统一执行,本层不区分全/半切);0/1(字符串或数字)与 true → 切;
+// false/"off" 保留「不切」语义;缺失 → 切。
 func parseCutCont(e *Element) (bool, error) {
 	t := bytes.TrimSpace(e.Cont)
 	if len(t) == 0 || string(t) == "null" {
@@ -99,9 +108,9 @@ func parseCutCont(e *Element) (bool, error) {
 	var s string
 	if err := json.Unmarshal(t, &s); err == nil {
 		switch strings.TrimSpace(s) {
-		case "1", "true", "on":
+		case "1", "0", "true", "on":
 			return true, nil
-		case "0", "false", "off":
+		case "false", "off":
 			return false, nil
 		default:
 			return false, fmt.Errorf("cut.cont 需为 0 或 1")
@@ -110,7 +119,7 @@ func parseCutCont(e *Element) (bool, error) {
 	var n int
 	if err := json.Unmarshal(t, &n); err == nil {
 		if n == 0 || n == 1 {
-			return n == 1, nil
+			return true, nil
 		}
 		return false, fmt.Errorf("cut.cont 需为 0 或 1")
 	}
@@ -119,6 +128,42 @@ func parseCutCont(e *Element) (bool, error) {
 		return b, nil
 	}
 	return false, fmt.Errorf("cut.cont 需为 0 或 1")
+}
+
+// plugin 开钱箱:cont "0"/"1" 选引脚(0=引脚 2、1=引脚 5);缺失 → 引脚 2。
+func (r *renderer) plugin(e *Element) error {
+	m, err := parsePluginPin(e)
+	if err != nil {
+		return err
+	}
+	r.b.CashDrawer(m)
+	return nil
+}
+
+func parsePluginPin(e *Element) (int, error) {
+	t := bytes.TrimSpace(e.Cont)
+	if len(t) == 0 || string(t) == "null" {
+		return 0, nil
+	}
+	var s string
+	if err := json.Unmarshal(t, &s); err == nil {
+		switch strings.TrimSpace(s) {
+		case "0":
+			return 0, nil
+		case "1":
+			return 1, nil
+		default:
+			return 0, fmt.Errorf("plugin.cont 需为 0 或 1")
+		}
+	}
+	var n int
+	if err := json.Unmarshal(t, &n); err == nil {
+		if n == 0 || n == 1 {
+			return n, nil
+		}
+		return 0, fmt.Errorf("plugin.cont 需为 0 或 1")
+	}
+	return 0, fmt.Errorf("plugin.cont 需为 0 或 1")
 }
 
 // kindOf 返回元素的种类标签,用于错误定位展示。

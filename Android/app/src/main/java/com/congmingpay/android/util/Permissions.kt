@@ -97,4 +97,25 @@ object Permissions {
             context.startActivity(intent)
         } catch (_: Exception) {}
     }
+
+    /** 是否已授予「显示在其他应用上层」（悬浮告警球） */
+    fun canDrawOverlays(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        return Settings.canDrawOverlays(context)
+    }
+
+    /** 跳转系统页申请悬浮窗权限 */
+    fun requestOverlayPermission(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        if (canDrawOverlays(context)) return
+        try {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:${context.packageName}")
+            ).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (_: Exception) {}
+    }
 }

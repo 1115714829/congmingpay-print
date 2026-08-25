@@ -84,6 +84,7 @@ class SettingsFragment : Fragment(), UiListener {
             append("服务名：${s.serviceName.ifEmpty { "票据打印服务" }}\n")
             append("系统通知：${if (!s.notifyDisabled) "开" else "关"} · ")
             append("云盒兼容：${if (!s.yunheCompatDisabled) "开" else "关"}\n")
+            append("开机启动：${if (s.bootStartEnabled) "开" else "关"} · ")
             append("打印历史保留：${s.jobHistoryDays} 天")
         }
 

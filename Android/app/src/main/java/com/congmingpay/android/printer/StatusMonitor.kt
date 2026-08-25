@@ -20,7 +20,20 @@ class StatusMonitor(
     private val cfg: ConfigManager,
     private val dispatcher: PrintDispatcher,
     private val onLabelChange: (printerId: String, online: Boolean, detail: String) -> Unit,
-    private val onBoolEdge: (printerId: String, online: Boolean, detail: String) -> Unit
+    /**
+     * 生效布尔边沿。
+     * @param failFirst 离线告警首因（在线时为空）
+     * @param sinceMs 事件起点（离线=断连起点；在线=当前）
+     * @param baseline true=首个生效态（启动/监测重建），调用方静默通知但仍可 raise/resolve 告警窗
+     */
+    private val onBoolEdge: (
+        printerId: String,
+        online: Boolean,
+        detail: String,
+        failFirst: String,
+        sinceMs: Long,
+        baseline: Boolean
+    ) -> Unit
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val monitors = mutableMapOf<String, Job>()
@@ -132,23 +145,31 @@ class StatusMonitor(
                     )
                 }
 
-                // ④ 生效布尔边沿 → 通知/告警（基线静默由回调侧处理也可；此处仍回调）
+                // ④ 生效布尔边沿 → 通知/告警
                 when {
                     eff < 0 -> { /* 未定 */ }
                     lastEff < 0 -> {
                         lastEff = eff
+                        val since = if (eff == 0) t0 - debouncer.failForMs(t0) else t0
                         onBoolEdge(
                             snapshot.id,
                             eff == 1,
-                            "${info.label}(${info.detail})"
+                            "${info.label}(${info.detail})",
+                            debouncer.failFirst,
+                            since,
+                            true
                         )
                     }
                     eff != lastEff -> {
                         lastEff = eff
+                        val since = if (eff == 0) t0 - debouncer.failForMs(t0) else t0
                         onBoolEdge(
                             snapshot.id,
                             eff == 1,
-                            "${info.label}(${info.detail})"
+                            "${info.label}(${info.detail})",
+                            debouncer.failFirst,
+                            since,
+                            false
                         )
                     }
                 }

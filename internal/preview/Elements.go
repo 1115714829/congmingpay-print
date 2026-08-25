@@ -56,10 +56,14 @@ func (c *canvas) element(e *layout.Element) error {
 		return c.divider(e, "*")
 	case "qrcode":
 		return c.qrcode(e)
-	case "bc128", "code39":
+	case "bc128", "bc128a", "bc128c", "code39":
 		return c.barcode(e)
 	case "png":
 		return c.png(e)
+	case "bmp":
+		return c.bmp(e)
+	case "plugin":
+		return nil // 开钱箱无视觉
 	case "cut":
 		return nil // 切纸意图无视觉(页脚已示意)
 	default:
@@ -123,7 +127,7 @@ func (c *canvas) title(e *layout.Element) error {
 	if err != nil {
 		return err
 	}
-	c.textLine(s, alignCenter, true, 1, 1)
+	c.textLine(s, alignCenter, false, 1, 1)
 	return nil
 }
 
@@ -325,6 +329,27 @@ func (c *canvas) png(e *layout.Element) error {
 	return nil
 }
 
+func (c *canvas) bmp(e *layout.Element) error {
+	al, err := parseAlign(e.Align)
+	if err != nil {
+		return err
+	}
+	s, err := contString(e)
+	if err != nil {
+		return err
+	}
+	data, err := layout.FetchImageBytes(s, "bmp")
+	if err != nil {
+		return err
+	}
+	img, err := layout.DecodeBMP(data)
+	if err != nil {
+		return err
+	}
+	c.drawImage(img, al)
+	return nil
+}
+
 func loadImage(src string) (image.Image, error) {
 	src = strings.TrimSpace(src)
 	if src == "" {
@@ -452,7 +477,7 @@ func (c *canvas) tableRow(cells []string, cols []int, mag int) {
 			}
 			sb.WriteString(padCell(seg, cw))
 		}
-		c.textLine(strings.TrimRight(sb.String(), " "), alignLeft, false, mag, mag)
+		c.textLine(sb.String(), alignLeft, false, mag, mag)
 	}
 }
 

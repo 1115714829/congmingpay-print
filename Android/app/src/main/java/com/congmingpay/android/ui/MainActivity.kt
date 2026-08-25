@@ -51,6 +51,10 @@ class MainActivity : AppCompatActivity(), UiListener {
 
         if (!Permissions.hasNotification(this)) Permissions.requestNotification(this)
         Permissions.requestBatteryExemption(this)
+        // 悬浮告警球：缺权限时引导一次
+        if (!Permissions.canDrawOverlays(this)) {
+            Permissions.requestOverlayPermission(this)
+        }
 
         mainNav.setOnItemSelectedListener { item ->
             when (item.itemId) {
@@ -75,6 +79,8 @@ class MainActivity : AppCompatActivity(), UiListener {
     override fun onResume() {
         super.onResume()
         attachAndRefresh()
+        // 从悬浮窗权限页返回后补挂告警球
+        PrintService.instance?.refreshAlertOverlay()
     }
 
     override fun onPause() {

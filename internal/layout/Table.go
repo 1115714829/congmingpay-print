@@ -78,8 +78,8 @@ func (r *renderer) table(e *Element) error {
 		if e.LineDiv == 1 {
 			r.b.Line(strings.Repeat("-", cpl))
 		}
-		for i := 0; i < e.LineSpace; i++ {
-			r.b.Feed(1)
+		if e.LineSpace > 0 {
+			r.b.FeedDots(e.LineSpace) // ESC J n 点数(8 点=1mm)
 		}
 	}
 	if w > 0 {
@@ -88,9 +88,19 @@ func (r *renderer) table(e *Element) error {
 	return nil
 }
 
-// tableRow 渲染一行:各单元格按列宽(标准字格数)换行,行内多行左对齐拼接。
-// scale=当前字号相对标准字的宽度倍率:表头=1,放大 tbody= w+1;格界按物理宽折算,保证列界对齐。
+// tableRow 渲染一行:各单元格按列宽换行,行内多行左对齐拼接。
+// scale=当前字号相对标准字的宽度倍率:表头=1,放大 tbody= w+1。
+// GS ! 放大对空格同样生效,故放大时每列可容纳的字符数=物理列宽/scale(eff),
+// padding 直接按 eff 补(不再 ×scale),否则整行物理点宽会远超纸宽触发打印机自动换行。
 func (r *renderer) tableRow(cells []string, cols []int, scale int) {
+	// 放大后每列有效字符宽(物理列宽 ÷ 字号倍率);scale=1 时 eff=cols,与不放大等价
+	eff := make([]int, len(cols))
+	for i := range cols {
+		eff[i] = cols[i] / scale
+		if eff[i] < 1 {
+			eff[i] = 1
+		}
+	}
 	wrapped := make([][]string, len(cols))
 	maxLines := 1
 	for i := range cols {
@@ -98,29 +108,29 @@ func (r *renderer) tableRow(cells []string, cols []int, scale int) {
 		if i < len(cells) {
 			cell = cells[i]
 		}
-		wrapped[i] = wrapByWidth(cell, cols[i])
+		wrapped[i] = wrapByWidth(cell, eff[i])
 		if len(wrapped[i]) > maxLines {
 			maxLines = len(wrapped[i])
 		}
 	}
 	for ln := 0; ln < maxLines; ln++ {
 		var sb strings.Builder
-		for i, cw := range cols {
+		for i := range cols {
 			seg := ""
 			if ln < len(wrapped[i]) {
 				seg = wrapped[i][ln]
 			}
-			sb.WriteString(padCell(seg, cw, scale))
+			sb.WriteString(padCell(seg, eff[i]))
 		}
-		r.b.SetAlign(escpos.AlignLeft).Line(strings.TrimRight(sb.String(), " "))
+		r.b.SetAlign(escpos.AlignLeft).Line(sb.String())
 	}
 }
 
-// padCell 把 s 右侧补空格到列宽 cw(标准字格数),左对齐。
-// scale=当前字号宽度倍率:内容物理宽=DisplayWidth(s)*scale,格物理宽=cw*scale,
-// 故补足当前字号下的空格数=(cw-DisplayWidth(s))*scale,使格界物理对齐。
-func padCell(s string, cw, scale int) string {
-	pad := (cw - escpos.DisplayWidth(s)) * scale
+// padCell 把 s 右侧补空格到列宽 cw(放大后字符列宽),左对齐。
+// cw 已是当前字号下的字符容量(放大表=cols/scale,不放大表=cols),
+// 故补足空格数 = cw - DisplayWidth(s);空格自身已被 GS ! 放大,不再额外 ×scale。
+func padCell(s string, cw int) string {
+	pad := cw - escpos.DisplayWidth(s)
 	if pad < 0 {
 		pad = 0
 	}
