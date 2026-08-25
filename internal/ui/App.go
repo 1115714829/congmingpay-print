@@ -42,12 +42,14 @@ type App struct {
 	quitting      bool // 托盘「退出」置位:放行 Closing,不再拦截为隐藏
 	trayHintShown bool // 首次最小化到托盘的提示,每次运行至多一条
 
-	navPrinters  *walk.PushButton
-	navJobs      *walk.PushButton
-	navSettings  *walk.PushButton
+	navPrinters *walk.PushButton
+	navJobs     *walk.PushButton
+	navGeneral  *walk.PushButton
+	navMqtt     *walk.PushButton
 	printersPage *walk.Composite
 	jobsPage     *walk.Composite
-	settingsPage *walk.Composite
+	generalPage  *walk.Composite
+	mqttPage     *walk.Composite
 
 	statusText *walk.Label
 	statusMsg  *walk.Label
@@ -72,8 +74,10 @@ type App struct {
 	yunheCompat     *walk.CheckBox // 云盒兼容模式(勾选=开=C1–C4)
 	jobHistoryDays  *walk.LineEdit
 	mqttEnabled     *walk.CheckBox
-	mqttTabs        *walk.TabWidget
-	mqttProviderTab int // 创建后切到对应 Provider Tab:0自建 1云消息队列 2物联网
+	mqttProvGeneric *walk.RadioButton // Provider 三选一:自建 / 云消息队列 / 物联网
+	mqttProvAli     *walk.RadioButton
+	mqttProvIot     *walk.RadioButton
+	mqttForms       *walk.Composite // 三组 Provider 表单容器(子项顺序:自建/云消息队列/物联网)
 	// 自建
 	mqttBroker *walk.LineEdit
 	mqttPort   *walk.LineEdit
@@ -143,21 +147,22 @@ func (a *App) Run() error {
 	if err := (MainWindow{
 		AssignTo: &a.mw,
 		Title:    a.windowTitle(),
-		MinSize:  Size{Width: 720, Height: 480},
-		Size:     Size{Width: 1000, Height: 720},
+		MinSize:  Size{Width: 780, Height: 560},
+		Size:     Size{Width: 800, Height: 600},
 		Layout:   VBox{MarginsZero: true, SpacingZero: true},
 		Children: []Widget{
 			Composite{
 				Layout: HBox{MarginsZero: true, SpacingZero: true},
 				Children: []Widget{
 					Composite{
-						MinSize: Size{Width: 150},
-						MaxSize: Size{Width: 150},
-						Layout:  VBox{Margins: Margins{Left: 8, Top: 8, Right: 8, Bottom: 8}, Spacing: 6},
+						MinSize: Size{Width: 100},
+						MaxSize: Size{Width: 100},
+						Layout:  VBox{Margins: Margins{Left: 6, Top: 6, Right: 6, Bottom: 6}, Spacing: 4},
 						Children: []Widget{
-							PushButton{AssignTo: &a.navPrinters, Text: "打印机", MinSize: Size{Height: 40}, OnClicked: func() { a.showPage(0) }},
-							PushButton{AssignTo: &a.navJobs, Text: "打印队列", MinSize: Size{Height: 40}, OnClicked: func() { a.showPage(1) }},
-							PushButton{AssignTo: &a.navSettings, Text: "系统设置", MinSize: Size{Height: 40}, OnClicked: func() { a.showPage(2) }},
+							PushButton{AssignTo: &a.navPrinters, Text: "打印机", MinSize: Size{Height: 34}, OnClicked: func() { a.showPage(0) }},
+							PushButton{AssignTo: &a.navJobs, Text: "打印队列", MinSize: Size{Height: 34}, OnClicked: func() { a.showPage(1) }},
+							PushButton{AssignTo: &a.navGeneral, Text: "常规", MinSize: Size{Height: 34}, OnClicked: func() { a.showPage(2) }},
+							PushButton{AssignTo: &a.navMqtt, Text: "云端 MQTT", MinSize: Size{Height: 34}, OnClicked: func() { a.showPage(3) }},
 							VSpacer{},
 						},
 					},
@@ -166,7 +171,8 @@ func (a *App) Run() error {
 						Children: []Widget{
 							a.printersPageWidget(),
 							a.jobsPageWidget(),
-							a.settingsPageWidget(),
+							a.generalPageWidget(),
+							a.mqttPageWidget(),
 						},
 					},
 				},
@@ -176,9 +182,14 @@ func (a *App) Run() error {
 	}).Create(); err != nil {
 		return err
 	}
-	if a.mqttTabs != nil && a.mqttProviderTab > 0 {
-		_ = a.mqttTabs.SetCurrentIndex(a.mqttProviderTab)
-	}
+	// 按已保存 Provider 初始选中对应单选,并挂切换回调(显隐三组表单)
+	a.initMqttProviderSelection()
+
+	// 坑:walk 创建时若布局最小尺寸大于设定 Size,窗口会被自动撑大且之后不缩回
+	// (FormBase.SetBoundsPixels/startLayout 按 MinSizeForSize 钳制)。非首屏页构建时
+	// 已隐藏(Visible=false)、非选中 MQTT 表单也已隐藏,此处按物理像素强制 800×600,
+	// 不随 DPI 缩放换算,保证低分辨率目标机首开即用满屏。
+	_ = a.mw.SetSizePixels(walk.Size{Width: 800, Height: 600})
 
 	if icon != nil {
 		_ = a.mw.SetIcon(icon)
@@ -264,16 +275,18 @@ func (a *App) showPage(i int) {
 	}
 	a.printersPage.SetVisible(i == 0)
 	a.jobsPage.SetVisible(i == 1)
-	a.settingsPage.SetVisible(i == 2)
+	a.generalPage.SetVisible(i == 2)
+	a.mqttPage.SetVisible(i == 3)
 	// 禁用当前页对应的导航按钮以示"选中"
 	a.navPrinters.SetEnabled(i != 0)
 	a.navJobs.SetEnabled(i != 1)
-	a.navSettings.SetEnabled(i != 2)
+	a.navGeneral.SetEnabled(i != 2)
+	a.navMqtt.SetEnabled(i != 3)
 	if i == 1 {
 		a.refreshJobs()
 	}
-	if i == 2 {
-		a.refreshMqttStatus() // 打开设置页时刷新 MQTT 连接状态
+	if i == 3 {
+		a.refreshMqttStatus() // 打开云端 MQTT 页时刷新连接状态
 	}
 }
 

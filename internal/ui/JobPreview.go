@@ -48,8 +48,8 @@ func (a *App) onPreviewJob() {
 	_, err = (Dialog{
 		AssignTo: &dlg,
 		Title:    title,
-		MinSize:  Size{Width: 420, Height: 520},
-		Size:     Size{Width: 480, Height: 640},
+		MinSize:  Size{Width: 420, Height: 420},
+		Size:     Size{Width: 460, Height: 540},
 		Layout:   VBox{Margins: Margins{Left: 8, Top: 8, Right: 8, Bottom: 8}, Spacing: 6},
 		Children: []Widget{
 			Label{Text: note},

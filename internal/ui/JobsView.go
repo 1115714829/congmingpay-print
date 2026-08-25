@@ -9,8 +9,11 @@ import (
 )
 
 func (a *App) jobsPageWidget() Composite {
+	// 构建即隐藏:walk 创建窗口时布局最小尺寸按全部可见子控件计算,非首屏页若可见
+	// 会把最小高度叠加进去,导致窗口被撑大且之后不缩回(showPage 切页时才改可见性)。
 	return Composite{
 		AssignTo: &a.jobsPage,
+		Visible:  false,
 		Layout:   VBox{MarginsZero: true, SpacingZero: true},
 		Children: []Widget{
 			Composite{
@@ -24,16 +27,18 @@ func (a *App) jobsPageWidget() Composite {
 				},
 			},
 			TableView{
-				AssignTo:  &a.jobTV,
-				Model:     a.jobModel,
-				StyleCell: a.jobModel.StyleCell,
+				AssignTo:            &a.jobTV,
+				Model:               a.jobModel,
+				StyleCell:           a.jobModel.StyleCell,
+				LastColumnStretched: true, // 窗口放大时末列(详情)吃掉剩余宽度,表格填满
+				// 列宽合计 661 ≤ 686 内容宽;表格最小宽=列宽合计,超了会把主窗口撑大
 				Columns: []TableViewColumn{
-					{Title: "任务号", Width: 70},
-					{Title: "文档", Width: 170},
-					{Title: "目标打印机", Width: 130},
-					{Title: "状态", Width: 80},
-					{Title: "提交时间", Width: 90},
-					{Title: "详情", Width: 300},
+					{Title: "任务号", Width: 56},
+					{Title: "文档", Width: 120},
+					{Title: "目标打印机", Width: 96},
+					{Title: "状态", Width: 64},
+					{Title: "提交时间", Width: 74},
+					{Title: "详情", Width: 251},
 				},
 			},
 		},
