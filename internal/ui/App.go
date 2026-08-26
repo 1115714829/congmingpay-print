@@ -78,6 +78,13 @@ type App struct {
 	mqttProvAli     *walk.RadioButton
 	mqttProvIot     *walk.RadioButton
 	mqttForms       *walk.Composite // 三组 Provider 表单容器(子项顺序:自建/云消息队列/物联网)
+	// 超管解锁(会话态,重启回落):锁定态隐藏接入方式行与 IoT 5 个预置参数行
+	mqttProvRow *walk.Composite
+	mqttIotRegion   *walk.Composite // IoT 隐藏行:地域
+	mqttIotEndpoint *walk.Composite // IoT 隐藏行:MQTT 地址
+	mqttIotPort     *walk.Composite // IoT 隐藏行:端口
+	mqttIotDown     *walk.Composite // IoT 隐藏行:下行后缀
+	mqttIotUp       *walk.Composite // IoT 隐藏行:上行后缀
 	// 自建
 	mqttBroker *walk.LineEdit
 	mqttPort   *walk.LineEdit

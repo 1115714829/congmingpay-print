@@ -88,6 +88,20 @@ func Load(path string) (*Config, error) {
 // normalize 补全旧配置缺省字段。
 func (c *Config) normalize() {
 	c.Settings.JobHistoryDays = model.ClampJobHistoryDays(c.Settings.JobHistoryDays)
+	// 云端通道唯一且默认物联网平台:旧配置非 iot 时切为 iot;预置参数仅空值回填,
+	// 超管解锁后用户改过的端点/后缀不被覆盖。保存设置后随 config.json 落盘。
+	if c.Settings.MQTT.EffectiveProvider() != model.MQTTProviderIot {
+		c.Settings.MQTT.Provider = model.MQTTProviderIot
+	}
+	if c.Settings.MQTT.Iot.Endpoint == "" {
+		c.Settings.MQTT.Iot.Endpoint = model.IotDefaultEndpoint
+	}
+	if c.Settings.MQTT.Iot.DownSuffix == "" {
+		c.Settings.MQTT.Iot.DownSuffix = model.IotDefaultDownSuffix
+	}
+	if c.Settings.MQTT.Iot.UpSuffix == "" {
+		c.Settings.MQTT.Iot.UpSuffix = model.IotDefaultUpSuffix
+	}
 	for _, p := range c.Printers {
 		if p == nil {
 			continue

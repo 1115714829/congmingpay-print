@@ -125,13 +125,16 @@ func (a *App) mqttPageWidget() Composite {
 					Label{Text: "连接状态:"},
 					// 动态状态/主题串可能很长,单行 Label 默认最小宽=整段文字宽,会把本页最小宽
 					// 顶过 686 内容宽、切页撑大主窗口;EllipsisEnd 使其最小宽归 0、超宽省略号。
-					Label{AssignTo: &a.mqttStatus, Text: "—", TextColor: colGray, EllipsisMode: EllipsisEnd},
+					Label{AssignTo: &a.mqttStatus, Text: "—", TextColor: colGray, EllipsisMode: EllipsisEnd, MaxSize: Size{Width: 300}},
 				},
 			},
 			// 同容器相邻 RadioButton 自动组成互斥组(BS_AUTORADIOBUTTON);
 			// 初始选中与切换回调由 initMqttProviderSelection 统一处理。
+			// 锁定态(默认)整行隐藏:只显示物联网平台;超管配置解锁后 SetVisible(true)。
 			Composite{
-				Layout: HBox{Spacing: 16, Margins: Margins{Left: 2, Top: 0, Right: 0, Bottom: 0}},
+				AssignTo: &a.mqttProvRow,
+				Visible:  false,
+				Layout:   HBox{Spacing: 16, Margins: Margins{Left: 2, Top: 0, Right: 0, Bottom: 0}},
 				Children: []Widget{
 					Label{Text: "接入方式:"},
 					RadioButton{AssignTo: &a.mqttProvGeneric, Text: "自建 MQTT", OnClicked: func() { a.showMqttForm(model.MQTTProviderGeneric) }},
@@ -156,11 +159,12 @@ func (a *App) mqttPageWidget() Composite {
 		Composite{
 			Layout: HBox{Spacing: 8},
 			Children: []Widget{
+				PushButton{Text: "超管配置", OnClicked: a.onMqttSuperAdmin},
+				HSpacer{},
 				PushButton{Text: "连接测试", OnClicked: a.onTestMQTT},
-					HSpacer{},
-					PushButton{Text: "保存设置", OnClicked: a.onSaveSettings},
-				},
+				PushButton{Text: "保存设置", OnClicked: a.onSaveSettings},
 			},
+		},
 		},
 	}
 }
@@ -219,13 +223,15 @@ func (a *App) mqttFormAliyun(prevSub, prevRep, prevCID string) GroupBox {
 			Label{Text: "上行后缀:"},
 			LineEdit{AssignTo: &a.aliUpSuffix, Text: ali.UpSuffix, CueBanner: "report", OnTextChanged: a.onAliyunPreview},
 			Label{Text: "实际订阅:"},
-			Label{AssignTo: &a.aliPreviewSub, Text: prevSub, TextColor: colGray, EllipsisMode: EllipsisEnd},
+			// 同 IoT 预览:EllipsisEnd 最小宽归 0 会被 Grid 压成 0 宽,MaxSize 300 保可见。
+			Label{AssignTo: &a.aliPreviewSub, Text: prevSub, TextColor: colGray, EllipsisMode: EllipsisEnd, MaxSize: Size{Width: 300}},
 			Label{Text: "实际上报 / ClientID:"},
 			Composite{
 				Layout: HBox{Spacing: 12, MarginsZero: true},
 				Children: []Widget{
-					Label{AssignTo: &a.aliPreviewRep, Text: orDash(prevRep), TextColor: colGray, EllipsisMode: EllipsisEnd},
-					Label{AssignTo: &a.aliPreviewCID, Text: cidOrDash(prevCID), TextColor: colGray, EllipsisMode: EllipsisEnd},
+					Label{AssignTo: &a.aliPreviewRep, Text: orDash(prevRep), TextColor: colGray, EllipsisMode: EllipsisEnd, MaxSize: Size{Width: 300}},
+					Label{AssignTo: &a.aliPreviewCID, Text: cidOrDash(prevCID), TextColor: colGray, EllipsisMode: EllipsisEnd, MaxSize: Size{Width: 300}},
+					HSpacer{},
 				},
 			},
 		},
@@ -254,31 +260,69 @@ func (a *App) mqttFormIot(prevSub, prevRep, prevHost, prevUser, prevCID string) 
 			},
 			Label{Text: "DeviceSecret:"},
 			LineEdit{AssignTo: &a.iotDeviceSecret, Text: iot.DeviceSecret, PasswordMode: true},
-			Label{Text: "地域(可选):"},
-			LineEdit{AssignTo: &a.iotRegionId, Text: iot.RegionId, CueBanner: "未填 MQTT 地址时拼接入点,如 cn-shanghai", OnTextChanged: a.onIotPreview},
-			Label{Text: "MQTT 地址(可选):"},
-			LineEdit{AssignTo: &a.iotEndpoint, Text: iot.Endpoint, CueBanner: "控制台接入点;空则按 ProductKey+地域拼接", OnTextChanged: a.onIotPreview},
-			Label{Text: "端口:"},
-			LineEdit{AssignTo: &a.iotPort, Text: strconv.Itoa(portOr(iot.Port, 1883)), MaxSize: Size{Width: 90}},
-			Label{Text: "下行后缀:"},
-			LineEdit{AssignTo: &a.iotDownSuffix, Text: iot.DownSuffix, CueBanner: "cmd → /pk/dn/user/cmd", OnTextChanged: a.onIotPreview},
-			Label{Text: "上行后缀:"},
-			LineEdit{AssignTo: &a.iotUpSuffix, Text: iot.UpSuffix, CueBanner: "report → /pk/dn/user/report", OnTextChanged: a.onIotPreview},
+			// 预置参数 5 行(地域/地址/端口/上下行后缀)锁定态整行隐藏,超管解锁后展开。
+			// 每行 Label+输入框包进一个跨 2 列的 Composite,整行显隐;隐藏时 Grid 该行高度归 0。
+			Composite{
+				AssignTo: &a.mqttIotRegion, Visible: false, ColumnSpan: 2,
+				Layout: HBox{MarginsZero: true, Spacing: 6},
+				Children: []Widget{
+					Label{Text: "地域(可选):"},
+					LineEdit{AssignTo: &a.iotRegionId, Text: iot.RegionId, CueBanner: "未填 MQTT 地址时拼接入点,如 cn-shanghai", OnTextChanged: a.onIotPreview},
+				},
+			},
+			Composite{
+				AssignTo: &a.mqttIotEndpoint, Visible: false, ColumnSpan: 2,
+				Layout: HBox{MarginsZero: true, Spacing: 6},
+				Children: []Widget{
+					Label{Text: "MQTT 地址(可选):"},
+					LineEdit{AssignTo: &a.iotEndpoint, Text: iot.Endpoint, CueBanner: "控制台接入点;空则按 ProductKey+地域拼接", OnTextChanged: a.onIotPreview},
+				},
+			},
+			Composite{
+				AssignTo: &a.mqttIotPort, Visible: false, ColumnSpan: 2,
+				Layout: HBox{MarginsZero: true, Spacing: 6},
+				Children: []Widget{
+					Label{Text: "端口:"},
+					LineEdit{AssignTo: &a.iotPort, Text: strconv.Itoa(portOr(iot.Port, 1883)), MaxSize: Size{Width: 90}},
+					HSpacer{},
+				},
+			},
+			Composite{
+				AssignTo: &a.mqttIotDown, Visible: false, ColumnSpan: 2,
+				Layout: HBox{MarginsZero: true, Spacing: 6},
+				Children: []Widget{
+					Label{Text: "下行后缀:"},
+					LineEdit{AssignTo: &a.iotDownSuffix, Text: iot.DownSuffix, CueBanner: "cmd → /pk/dn/user/cmd", OnTextChanged: a.onIotPreview},
+				},
+			},
+			Composite{
+				AssignTo: &a.mqttIotUp, Visible: false, ColumnSpan: 2,
+				Layout: HBox{MarginsZero: true, Spacing: 6},
+				Children: []Widget{
+					Label{Text: "上行后缀:"},
+					LineEdit{AssignTo: &a.iotUpSuffix, Text: iot.UpSuffix, CueBanner: "report → /pk/dn/user/report", OnTextChanged: a.onIotPreview},
+				},
+			},
 			Label{Text: "订阅 / 上报:"},
+			// EllipsisEnd 的 Label 最小宽为 0,Grid 分配时会把它压成 0 宽(上轮「订阅/上报」
+			// 不显示的根因)。追加 MaxSize 300 给 minSizeEffective 一个确定宽度,配合行尾
+			// HSpacer 让 HBox 容器可横伸,列宽分配稳定、文字正常可见。
 			Composite{
 				Layout: HBox{Spacing: 12, MarginsZero: true},
 				Children: []Widget{
-					Label{AssignTo: &a.iotPreviewSub, Text: prevSub, TextColor: colGray, EllipsisMode: EllipsisEnd},
-					Label{AssignTo: &a.iotPreviewRep, Text: prevRep, TextColor: colGray, EllipsisMode: EllipsisEnd},
+					Label{AssignTo: &a.iotPreviewSub, Text: prevSub, TextColor: colGray, EllipsisMode: EllipsisEnd, MaxSize: Size{Width: 300}},
+					Label{AssignTo: &a.iotPreviewRep, Text: prevRep, TextColor: colGray, EllipsisMode: EllipsisEnd, MaxSize: Size{Width: 300}},
+					HSpacer{},
 				},
 			},
 			Label{Text: "接入点 / User / CID:"},
 			Composite{
 				Layout: HBox{Spacing: 12, MarginsZero: true},
 				Children: []Widget{
-					Label{AssignTo: &a.iotPreviewHost, Text: prevHost, TextColor: colGray, EllipsisMode: EllipsisEnd},
-					Label{AssignTo: &a.iotPreviewUser, Text: orDash(prevUser), TextColor: colGray, EllipsisMode: EllipsisEnd},
-					Label{AssignTo: &a.iotPreviewCID, Text: cidOrDash(prevCID), TextColor: colGray, EllipsisMode: EllipsisEnd},
+					Label{AssignTo: &a.iotPreviewHost, Text: prevHost, TextColor: colGray, EllipsisMode: EllipsisEnd, MaxSize: Size{Width: 300}},
+					Label{AssignTo: &a.iotPreviewUser, Text: orDash(prevUser), TextColor: colGray, EllipsisMode: EllipsisEnd, MaxSize: Size{Width: 300}},
+					Label{AssignTo: &a.iotPreviewCID, Text: cidOrDash(prevCID), TextColor: colGray, EllipsisMode: EllipsisEnd, MaxSize: Size{Width: 300}},
+					HSpacer{},
 				},
 			},
 		},
@@ -314,6 +358,66 @@ func (a *App) initMqttProviderSelection() {
 		a.mqttProvGeneric.SetChecked(true)
 	}
 	a.showMqttForm(a.currentProvider())
+}
+
+// mqttSuperAdminCode 超管配置密码:解锁后接入方式行与 IoT 预置参数 5 行展开可编辑,
+// 仅当前会话有效(重启回落锁定态,不写配置)。
+const mqttSuperAdminCode = "88888888"
+
+// onMqttSuperAdmin 弹超管密码框,校验通过则展开接入方式行与 IoT 预置参数行。
+func (a *App) onMqttSuperAdmin() {
+	var dlg *walk.Dialog
+	var codeLE *walk.LineEdit
+	ok := false
+	_, _ = (Dialog{
+		AssignTo: &dlg,
+		Title:   "超管配置",
+		MinSize: Size{Width: 320, Height: 130},
+		Layout:  VBox{Spacing: 10},
+		Children: []Widget{
+			Label{Text: "输入超管密码:"},
+			LineEdit{AssignTo: &codeLE, PasswordMode: true, MaxSize: Size{Width: 200}},
+			Composite{
+				Layout: HBox{Spacing: 8},
+				Children: []Widget{
+					HSpacer{},
+					// 项目坑:对话框关闭后控件即销毁,读 Text 得空——校验必须在 Accept 前
+					// 用闭包变量 ok 完成,Run 返回后只看 ok。
+					PushButton{Text: "确定", OnClicked: func() {
+						if strings.TrimSpace(codeLE.Text()) == mqttSuperAdminCode {
+							ok = true
+						}
+						dlg.Accept()
+					}},
+					PushButton{Text: "取消", OnClicked: func() {
+						dlg.Cancel()
+					}},
+				},
+			},
+		},
+	}).Run(a.mw)
+	if !ok {
+		a.warn("超管配置", "密码错误,配置未解锁。")
+		return
+	}
+	a.applyMqttUnlock(true)
+}
+
+// applyMqttUnlock 按会话态显隐接入方式行与 IoT 预置参数 5 行(不写配置,重启回落)。
+func (a *App) applyMqttUnlock(unlocked bool) {
+	if a.mqttProvRow != nil {
+		a.mqttProvRow.SetVisible(unlocked)
+	}
+	for _, row := range []*walk.Composite{
+		a.mqttIotRegion, a.mqttIotEndpoint, a.mqttIotPort, a.mqttIotDown, a.mqttIotUp,
+	} {
+		if row != nil {
+			row.SetVisible(unlocked)
+		}
+	}
+	if unlocked {
+		a.showMqttForm(a.currentProvider())
+	}
 }
 
 func (a *App) onMerchantChanged() {

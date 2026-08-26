@@ -83,6 +83,13 @@ func (s Settings) YunheCompat() bool {
 	return !s.YunheCompatDisabled
 }
 
+// Iot 预置参数(预置端点下地域行隐藏;超管解锁后可改,空值迁移时回填)。
+const (
+	IotDefaultEndpoint   = "iot-060a5ivg.mqtt.iothub.aliyuncs.com"
+	IotDefaultDownSuffix = "pushMsg"
+	IotDefaultUpSuffix   = "self_service_reply"
+)
+
 // DefaultSettings 返回默认设置。
 func DefaultSettings() Settings {
 	return Settings{
@@ -90,9 +97,14 @@ func DefaultSettings() Settings {
 		JobHistoryDays: DefaultJobHistoryDays,
 		MQTT: MQTT{
 			Port:     1883,
-			Provider: MQTTProviderGeneric,
+			Provider: MQTTProviderIot, // 默认物联网平台(预置端点+上下行后缀)
 			Aliyun:   AliyunMQTT{Port: 1883},
-			Iot:      IoTMQTT{Port: 1883, RegionId: "cn-shanghai"},
+			Iot: IoTMQTT{
+				Port:       1883,
+				Endpoint:   IotDefaultEndpoint,
+				DownSuffix: IotDefaultDownSuffix,
+				UpSuffix:   IotDefaultUpSuffix,
+			},
 		},
 		DocServer: DocServer{Enabled: true, Port: 8080},
 	}
