@@ -20,3 +20,18 @@
 /SDK/
 /_design/
 /50-80.zip
+
+# web 管理系统运行数据(web.db、log,不入库)
+web/backend/data/
+
+# 依赖(MCP 工具 edge-devtools-mcp 等)
+node_modules/
+
+# 设备证书导出(含 DeviceSecret,不入库)
+/设备证书.csv
+web/certs.csv
+
+# 临时/工具目录(不入库)
+.qwen/
+.tmp/
+.tmpedge/

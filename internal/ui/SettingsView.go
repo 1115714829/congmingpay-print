@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"congmingpay/internal/docserver"
+	"congmingpay/internal/logger"
 	"congmingpay/internal/model"
 	"congmingpay/internal/mqtt"
 
@@ -244,22 +245,74 @@ func (a *App) mqttFormIot(prevSub, prevRep, prevHost, prevUser, prevCID string) 
 	if iot.Port <= 0 {
 		iot.Port = 1883
 	}
+	// 自由打印SN 下拉初值=本地已绑定 SN(未绑定则空,「获取设备信息」后填充)。
+	// 已有保存 SN=已绑定,下拉锁定;换绑须先经管理端解绑,再点「获取设备信息」重新认领。
+	dn := strings.TrimSpace(iot.DeviceName)
+	iotSNModel := []string{}
+	iotSNIndex := -1
+	if dn != "" {
+		iotSNModel = []string{dn}
+		iotSNIndex = 0
+	}
 	return GroupBox{
 		Title:  "物联网平台(一机一密)",
 		Layout: Grid{Columns: 2, Spacing: 5, Margins: Margins{Left: 8, Top: 6, Right: 8, Bottom: 6}},
 		Children: []Widget{
-			Label{Text: "ProductKey:"},
-			LineEdit{AssignTo: &a.iotProductKey, Text: iot.ProductKey, OnTextChanged: a.onIotPreview},
-			Label{Text: "DeviceName:"},
+			Label{Text: "自由打印SN:"},
 			Composite{
 				Layout: HBox{Spacing: 6, MarginsZero: true},
 				Children: []Widget{
-					LineEdit{AssignTo: &a.iotDeviceName, Text: iot.DeviceName, CueBanner: "设备名称", OnTextChanged: a.onIotPreview},
-					PushButton{Text: "设备列表", MaxSize: Size{Width: 84}, OnClicked: a.onIotFetchDevices},
+					// 纯下拉(禁止手输):数据经「获取设备信息」从管理端拉取并绑定。
+					// 已保存 SN(已绑定)时禁用,保存设置后/重启后均保持锁定。
+					ComboBox{AssignTo: &a.iotSNBox, Model: iotSNModel, CurrentIndex: iotSNIndex,
+						Enabled: dn == "", MaxSize: Size{Width: 260}, OnCurrentIndexChanged: a.onIotSNChanged},
+					PushButton{Text: "获取设备信息", MaxSize: Size{Width: 104}, OnClicked: a.onIotFetchDevices},
+					HSpacer{},
 				},
 			},
-			Label{Text: "DeviceSecret:"},
-			LineEdit{AssignTo: &a.iotDeviceSecret, Text: iot.DeviceSecret, PasswordMode: true},
+			// DeviceName/ProductKey/DeviceSecret/设备源地址 由「获取设备信息」绑定后自动回填,
+			// 输入框常驻隐藏(仍参与保存与预览,超管排查时可临时展开)。
+			Composite{
+				AssignTo: &a.mqttIotSN, Visible: false, ColumnSpan: 2,
+				Layout: HBox{MarginsZero: true, Spacing: 6},
+				Children: []Widget{
+					Label{Text: "DeviceName:"},
+					LineEdit{AssignTo: &a.iotDeviceName, Text: iot.DeviceName},
+				},
+			},
+			Composite{
+				AssignTo: &a.mqttIotProduct, Visible: false, ColumnSpan: 2,
+				Layout: HBox{MarginsZero: true, Spacing: 6},
+				Children: []Widget{
+					Label{Text: "ProductKey:"},
+					LineEdit{AssignTo: &a.iotProductKey, Text: iot.ProductKey, OnTextChanged: a.onIotPreview},
+				},
+			},
+			Composite{
+				AssignTo: &a.mqttIotSecret, Visible: false, ColumnSpan: 2,
+				Layout: HBox{MarginsZero: true, Spacing: 6},
+				Children: []Widget{
+					Label{Text: "DeviceSecret:"},
+					LineEdit{AssignTo: &a.iotDeviceSecret, Text: iot.DeviceSecret, PasswordMode: true},
+				},
+			},
+			Composite{
+				AssignTo: &a.mqttIotManage, Visible: false, ColumnSpan: 2,
+				Layout: HBox{MarginsZero: true, Spacing: 6},
+				Children: []Widget{
+					Label{Text: "设备源地址:"},
+					// 地址暂固化(见 iotManageServerFixed):未保存过值时预填固化地址
+					LineEdit{AssignTo: &a.iotManageServer, Text: iotManageText(iot.ManageServer), CueBanner: "内置,一般无需修改"},
+				},
+			},
+			Composite{
+				AssignTo: &a.mqttIotMerchant, Visible: false, ColumnSpan: 2,
+				Layout: HBox{MarginsZero: true, Spacing: 6},
+				Children: []Widget{
+					Label{Text: "商户号:"},
+					LineEdit{AssignTo: &a.iotMerchantNo, Text: iot.MerchantNo, CueBanner: "获取设备信息时使用的长/短商户号"},
+				},
+			},
 			// 预置参数 5 行(地域/地址/端口/上下行后缀)锁定态整行隐藏,超管解锁后展开。
 			// 每行 Label+输入框包进一个跨 2 列的 Composite,整行显隐;隐藏时 Grid 该行高度归 0。
 			Composite{
@@ -488,12 +541,30 @@ func (a *App) currentIot() model.IoTMQTT {
 		ProductKey:   strings.TrimSpace(a.iotProductKey.Text()),
 		DeviceName:   strings.TrimSpace(a.iotDeviceName.Text()),
 		DeviceSecret: strings.TrimSpace(a.iotDeviceSecret.Text()),
+		ManageServer: normalizeManageServer(a.iotManageServer.Text()),
+		MerchantNo:   strings.TrimSpace(a.iotMerchantNo.Text()),
 		RegionId:     strings.TrimSpace(a.iotRegionId.Text()),
 		Endpoint:     strings.TrimSpace(a.iotEndpoint.Text()),
 		Port:         atoiOr(a.iotPort.Text(), 1883),
 		DownSuffix:   strings.TrimSpace(a.iotDownSuffix.Text()),
 		UpSuffix:     strings.TrimSpace(a.iotUpSuffix.Text()),
 	}
+}
+
+// onIotSNChanged SN 下拉选择变化 → 同步隐藏的 DeviceName/ProductKey/DeviceSecret 并刷新预览。
+func (a *App) onIotSNChanged() {
+	if a.iotSNBox == nil {
+		return
+	}
+	model, _ := a.iotSNBox.Model().([]string)
+	if i := a.iotSNBox.CurrentIndex(); i >= 0 && i < len(model) {
+		_ = a.iotDeviceName.SetText(model[i])
+		if i < len(a.iotSnOpts) {
+			_ = a.iotProductKey.SetText(a.iotSnOpts[i].ProductKey)
+			_ = a.iotDeviceSecret.SetText(a.iotSnOpts[i].DeviceSecret)
+		}
+	}
+	a.onIotPreview()
 }
 
 func (a *App) onIotPreview() {
@@ -516,9 +587,66 @@ func (a *App) onIotPreview() {
 	_ = a.iotPreviewRep.SetText(orDash(rep))
 }
 
-// onIotFetchDevices 设备列表拉取占位(后续接物联网 OpenAPI)。
+// onIotFetchDevices 「获取设备信息」新流程:小窗只输商户号 → 后台采指纹+lookup(只查询) →
+// 回主界面:已绑定=居中确认「是否直接使用」,未绑定=可认领设备填进 SN 下拉。
+// 绑定确认在点「保存设置」后由 reportIotBind 上报管理端。
 func (a *App) onIotFetchDevices() {
-	a.warn("功能预留", "获取设备列表尚未实现。\r\n请暂时手动填写 DeviceName、ProductKey、DeviceSecret。")
+	merchant, ok := a.runIotMerchantDialog()
+	if !ok || merchant == "" {
+		return
+	}
+	_ = a.iotMerchantNo.SetText(merchant)
+	a.toast(toastInfo, "正在获取设备信息…")
+	go func() {
+		fp, err := iotFingerprint()
+		res := iotLookupResult{}
+		if err != nil {
+			res.Msg = "硬件指纹采集失败:" + err.Error()
+		} else {
+			res = iotLookup(iotManageServerFixed, merchant, fp)
+		}
+		a.mw.Synchronize(func() { a.applyIotLookup(res) })
+	}()
+}
+
+// reportIotBind 设置保存后向管理端上报绑定确认(认领/恢复,幂等兼心跳)。
+// 需设备源地址+商户号+自由打印SN 三项齐全,与 MQTT 是否启用无关(绑定是设备登记动作,
+// 用户可能先登记设备、稍后再启用连接);失败不影响已保存设置,可再点「保存设置」重试。
+func (a *App) reportIotBind(m model.MQTT) {
+	if m.EffectiveProvider() != model.MQTTProviderIot {
+		return
+	}
+	iot := m.Iot
+	server := iot.ManageServer
+	if server == "" {
+		server = iotManageServerFixed // 设备源地址固化兜底
+	}
+	if server == "" || iot.MerchantNo == "" || iot.DeviceName == "" {
+		return
+	}
+	logger.Infof("物联网绑定确认上报: %s device=%s", server, iot.DeviceName)
+	a.toast(toastInfo, "设备绑定确认中…")
+	go func() {
+		fp, err := iotFingerprint()
+		res := iotBindResult{}
+		if err != nil {
+			res.Msg = "硬件指纹采集失败:" + err.Error()
+		} else {
+			res = iotBind(server, iot.MerchantNo, iot.DeviceName, fp)
+		}
+		if res.OK {
+			logger.Infof("物联网绑定确认成功: device=%s", res.DeviceName)
+		} else {
+			logger.Errorf("物联网绑定确认失败: device=%s 原因=%s", iot.DeviceName, res.Msg)
+		}
+		a.mw.Synchronize(func() {
+			if res.OK {
+				a.toast(toastSuccess, "设备绑定成功:"+res.DeviceName)
+			} else {
+				a.toast(toastError, "设备绑定失败:"+res.Msg)
+			}
+		})
+	}()
 }
 
 func (a *App) currentMQTT() model.MQTT {
@@ -562,7 +690,8 @@ func (a *App) onSaveSettings() {
 	m := a.currentMQTT()
 	if m.Enabled {
 		if err := validateMQTTForSave(m); err != nil {
-			a.warn("无法保存", err.Error())
+			logger.Info("无法保存: " + err.Error())
+			a.toast(toastError, "无法保存: "+err.Error())
 			return
 		}
 	}
@@ -578,7 +707,7 @@ func (a *App) onSaveSettings() {
 	s.DocServer.Port = docPortOr(atoiOr(a.docPort.Text(), docserver.DefaultPort))
 
 	a.save()
-	a.flash("设置已保存")
+	a.toast(toastSuccess, "设置已保存")
 	if a.svc != nil {
 		a.svc.SetHistoryDays(s.JobHistoryDays)
 	}
@@ -592,6 +721,12 @@ func (a *App) onSaveSettings() {
 		a.mc.Reload(s.MQTT)
 		a.refreshMqttStatus()
 	}
+	// 物联网平台:保存后 SN 下拉锁定(本机已绑定;换绑须先经管理端解绑再「获取设备信息」)
+	if m.EffectiveProvider() == model.MQTTProviderIot && strings.TrimSpace(m.Iot.DeviceName) != "" && a.iotSNBox != nil {
+		a.iotSNBox.SetEnabled(false)
+	}
+	// 设置生效后再上报管理端确认绑定(认领/恢复,幂等兼心跳)
+	a.reportIotBind(m)
 	if a.ds != nil {
 		a.ds.Reload(s.DocServer)
 		if a.docURL != nil {
@@ -610,7 +745,7 @@ func validateMQTTForSave(m model.MQTT) error {
 		case model.MQTTProviderAliyun:
 			return fmt.Errorf("启用云消息队列时请补全:地址、端口、InstanceId、AccessKey、SecretKey、GroupId、父主题、自定义 ID、下行后缀、上行后缀")
 		case model.MQTTProviderIot:
-			return fmt.Errorf("启用物联网平台时请补全:ProductKey、DeviceName、DeviceSecret、下行后缀、上行后缀；并填写 MQTT 地址，或填写地域以自动拼接入点")
+			return fmt.Errorf("启用物联网平台时请先点「获取设备信息」选择自由打印SN(自动回填 ProductKey/DeviceSecret)；并填写下行后缀、上行后缀，或填写 MQTT 地址/地域以自动拼接入点")
 		}
 		var miss []string
 		if strings.TrimSpace(m.Broker) == "" {

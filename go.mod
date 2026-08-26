@@ -14,7 +14,9 @@ require (
 )
 
 require (
+	github.com/StackExchange/wmi v1.2.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/go-ole/go-ole v1.2.5 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect

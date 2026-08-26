@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"congmingpay/internal/config"
 	"congmingpay/internal/docserver"
@@ -37,6 +38,16 @@ type App struct {
 	alertDlg   *walk.Dialog
 	alertTV    *walk.TableView
 	alertModel *AlertModel
+
+	// 居中悬浮提示窗(Toast.go;仅 UI 线程读写)
+	toastDlg         *walk.Dialog
+	toastLabel       *walk.Label
+	toastButtons     *walk.Composite
+	toastBtnYes      *walk.PushButton
+	toastBtnNo       *walk.PushButton
+	toastTimer       *time.Timer // walk v0.0.0-2021 无 Timer,用标准库 AfterFunc(仅 UI 线程换发/停)
+	toastConfirmMode bool // true=确认态(不自动消失,须点按钮)
+	toastCb          func(bool)
 
 	// 关闭按钮最小化到托盘(仅 UI 线程读写)
 	quitting      bool // 托盘「退出」置位:放行 Closing,不再拦截为隐藏
@@ -85,6 +96,12 @@ type App struct {
 	mqttIotPort     *walk.Composite // IoT 隐藏行:端口
 	mqttIotDown     *walk.Composite // IoT 隐藏行:下行后缀
 	mqttIotUp       *walk.Composite // IoT 隐藏行:上行后缀
+	// IoT 绑定回填行(常驻隐藏,「获取设备信息」自动填充;超管排查时可展开)
+	mqttIotSN      *walk.Composite // DeviceName(与 SN 下拉同步)
+	mqttIotProduct *walk.Composite // ProductKey
+	mqttIotSecret  *walk.Composite // DeviceSecret
+	mqttIotManage  *walk.Composite // 设备源地址
+	mqttIotMerchant *walk.Composite // 商户号(保存后上报绑定用)
 	// 自建
 	mqttBroker *walk.LineEdit
 	mqttPort   *walk.LineEdit
@@ -107,9 +124,13 @@ type App struct {
 	aliPreviewRep *walk.Label
 	aliPreviewCID *walk.Label
 	// 阿里云物联网平台(一机一密)
+	iotSNBox        *walk.ComboBox // 自由打印SN 下拉(禁止手输,数据从管理端获取)
+	iotSnOpts       []iotDevice    // 与 iotSNBox 下拉项一一对应(名称+密钥,选中回填用)
 	iotProductKey   *walk.LineEdit
 	iotDeviceName   *walk.LineEdit
 	iotDeviceSecret *walk.LineEdit
+	iotManageServer *walk.LineEdit
+	iotMerchantNo   *walk.LineEdit // 获取设备信息时使用的商户号(保存后上报绑定用)
 	iotRegionId     *walk.LineEdit
 	iotEndpoint     *walk.LineEdit
 	iotPort         *walk.LineEdit
@@ -260,6 +281,9 @@ func (a *App) Run() error {
 	if a.alertDlg != nil {
 		a.alertDlg.Dispose() // mw.Run 返回后仍在 UI 线程,可安全销毁
 	}
+	if a.toastDlg != nil {
+		a.toastDlg.Dispose()
+	}
 	a.stopAllMonitors()
 	return nil
 }
@@ -315,7 +339,8 @@ func (a *App) updateStatusBar() {
 	}
 	active := a.svc.ActiveCount()
 	if a.statusText != nil {
-		_ = a.statusText.SetText(fmt.Sprintf("共 %d 台设备 · %d 在线 · %d 个任务进行中", total, online, active))
+		_ = a.statusText.SetText(fmt.Sprintf("共 %d 台设备 · %d 在线 · %d 个任务进行中 · v%s",
+			total, online, active, config.AppVersion))
 	}
 	if a.navJobs != nil {
 		if active > 0 {

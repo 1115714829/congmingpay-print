@@ -24,7 +24,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 设计稿是自定义样式 web mock,原生 Walk 还原**结构/交互/彩色状态**,视觉是标准 Win32(非 mock 的浅蓝 Fluent/圆角/开关)。
 
-> 云端通道 = **MQTT(唯一,已实现,`internal/mqtt`)**:Provider 三选一——**自建**(用户名密码,订阅短商户号,上报手填主题)、**云消息队列 MQTT 版**(AK/SK;`GroupId@@@自定义ID`;主题 `{父主题}/{自定义ID}/{上下行后缀}`)、**物联网平台**(一机一密 ProductKey/DeviceName/DeviceSecret;主题 `/{pk}/{dn}/user/{上下行后缀}`;设备列表预留)。payload=`PrintRequest` 单/数组收打印;上行 **report** / **state**(定时+查询+LWT);每条带 `merchant`(自建=短商户号,云消息队列=自定义ID,物联网=DeviceName)。**数据 HTTP 通道已移除**;另有 `internal/docserver` 只读接口文档页。
+> 云端通道 = **MQTT(唯一,已实现,`internal/mqtt`)**:Provider 三选一——**自建**(用户名密码,订阅短商户号,上报手填主题)、**云消息队列 MQTT 版**(AK/SK;`GroupId@@@自定义ID`;主题 `{父主题}/{自定义ID}/{上下行后缀}`)、**物联网平台**(一机一密 ProductKey/DeviceName/DeviceSecret;主题 `/{pk}/{dn}/user/{上下行后缀}`;**设置页「获取设备信息」**:设备源地址(web 管理端)+商户号(长/短)→ 采本机硬件指纹(`internal/fingerprint`:主板序列号/CPU ID/**系统盘**序列号,无 MAC;canonical SHA256 与 web 端逐字节一致,固定向量测试锁定)→ lookup 只查询回填(已绑锁定恢复/未绑从商户名下可认领),**不产生绑定**;DeviceName(自由打印SN,纯下拉禁手输)/ProductKey/DeviceSecret 自动回填,商户号存 `MerchantNo`;点「保存设置」生效后才 `reportIotBind` 上报 `POST /device/bind` 确认绑定(幂等兼心跳,需 ManageServer+MerchantNo+DeviceName 齐全,失败不阻塞已保存设置,再点保存重试);`ManageServer` 持久化;版本号 `config.AppVersion` 状态栏显示并随 deviceInfo.appVersion 上送)。payload=`PrintRequest` 单/数组收打印;上行 **report** / **state**(定时+查询+LWT);每条带 `merchant`(自建=短商户号,云消息队列=自定义ID,物联网=DeviceName)。**数据 HTTP 通道已移除**;另有 `internal/docserver` 只读接口文档页。
 
 ## 技术栈(已定)
 

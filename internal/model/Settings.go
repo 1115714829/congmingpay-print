@@ -42,12 +42,17 @@ type AliyunMQTT struct {
 }
 
 // IoTMQTT 是物联网平台一机一密连接配置。
-// 设备列表拉取为预留能力;当前用手填 ProductKey/DeviceName/DeviceSecret。
+// ProductKey/DeviceSecret 由「获取设备信息」查询结果自动回填(表单行默认隐藏);
+// DeviceName 即「自由打印SN」,从管理端(ManageServer)拉取,禁止手输。
+// 绑定确认在「保存设置」后由本端调管理端 /device/bind 上报(兼心跳),
+// 需 ManageServer+MerchantNo+DeviceName 三项齐全。
 // 主题自动拼接为 /{ProductKey}/{DeviceName}/user/{后缀}(官方自定义 Topic 前缀固定含 /user)。
 type IoTMQTT struct {
 	ProductKey   string `json:"productKey"`
 	DeviceName   string `json:"deviceName"`
 	DeviceSecret string `json:"deviceSecret"`
+	ManageServer string `json:"manageServer,omitempty"` // 设备源(web 管理端)地址,如 http://192.168.1.10:9000
+	MerchantNo   string `json:"merchantNo,omitempty"`   // 获取设备信息时使用的商户号(长/短),保存后上报绑定用
 	RegionId     string `json:"regionId"`   // 可选;Endpoint 为空时拼接入点,如 cn-shanghai
 	Endpoint     string `json:"endpoint"`   // 可选;优先用手填,空则 {ProductKey}.iot-as-mqtt.{RegionId}.aliyuncs.com
 	Port         int    `json:"port"`       // 默认 1883(TCP securemode=3)

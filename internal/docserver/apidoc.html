@@ -126,7 +126,7 @@
     <tr><td>接入点</td><td>默认 <code>{ProductKey}.iot-as-mqtt.{RegionId}.aliyuncs.com</code>；亦可手填覆盖</td></tr>
     <tr><td>鉴权</td><td>设备证书：<code>ProductKey</code>／<code>DeviceName</code>／<code>DeviceSecret</code>。Username=<code>DeviceName&amp;ProductKey</code>；Password=<code>hex(HMAC-SHA1(DeviceSecret, content))</code>，content 为 <code>clientId</code>／<code>deviceName</code>／<code>productKey</code>／<code>timestamp</code> 按参数名字典序拼接</td></tr>
     <tr><td>ClientID</td><td><code>{ProductKey}.{DeviceName}|securemode=3,signmethod=hmacsha1,timestamp=…|</code></td></tr>
-    <tr><td>设备列表</td><td>设置页「获取设备列表」为预留占位，当前须手填设备三元组</td></tr>
+    <tr><td>设备获取</td><td>设置页「获取设备信息」：填写设备源地址（web 管理端）与商户号（长／短均可）→ 采集本机硬件指纹（主板序列号／CPU ID／系统盘序列号）查询管理端 → 已绑定则锁定恢复（不可切换），未绑定则从商户名下可认领设备中选择；查询仅回填 <code>DeviceName</code>（自由打印SN）／<code>ProductKey</code>／<code>DeviceSecret</code> 与设备源地址（无需手填），不产生绑定；点「保存设置」生效后才向管理端上报绑定确认（幂等兼心跳）</td></tr>
     <tr><td>KeepAlive／会话／QoS／LWT</td><td>与自建相同</td></tr>
   </table>
   <h3>3.2 主题</h3>
@@ -529,7 +529,7 @@
   <ul>
     <li>自建通道：上报主题无默认值，须在设置页配置；未配置时本服务不连接 MQTT，原因记录于日志。</li>
     <li>云消息队列：须填写地址、InstanceId、AccessKey、SecretKey、GroupId、父主题、自定义 ID、下行／上行后缀；主题为 <code>{父主题}/{自定义ID}/{后缀}</code>。</li>
-    <li>物联网平台：须填写 ProductKey、DeviceName、DeviceSecret、地域或 MQTT 地址、下行／上行后缀；主题为 <code>/{ProductKey}/{DeviceName}/user/{后缀}</code>；设备列表拉取为预留能力。</li>
+    <li>物联网平台：经设置页「获取设备信息」选择自由打印SN（自动回填 ProductKey／DeviceName／DeviceSecret 与设备源地址，仅查询不绑定）；点「保存设置」生效后才向管理端上报绑定确认；须填写下行／上行后缀，地域或 MQTT 地址可留空按 ProductKey 拼接入点；主题为 <code>/{ProductKey}/{DeviceName}/user/{后缀}</code>。</li>
     <li>上行消息的 <code>type</code> 与字段名为本服务与服务端的约定，如需调整以双方协商结果为准。</li>
   </ul>
 
@@ -554,10 +554,11 @@
     <tr><td>v1.15</td><td>2026-07-29</td><td>表格 <code>size</code> 仅作用于 <code>tbody</code> 数据行；表头行恒为不放大</td></tr>
     <tr><td>v1.16</td><td>2026-07-29</td><td>表格列宽按纸宽满行计算（58mm＝32 字符、80mm＝48 字符）；放大不改变列数、仅放大字符</td></tr>
     <tr><td>v1.17</td><td>2026-08-04</td><td>排版对齐厂商文档：新增 <code>bmp</code>／<code>plugin</code>／<code>bc128a</code>／<code>bc128c</code> 元素；<code>qrcode</code> size 支持 <code>"01"</code>–<code>"09"</code>（缺省 <code>"04"</code>）、内容上限 512 字节；<code>bc128</code> 系 size 改为模块宽＋高度档、默认码集 A；<code>cut</code> 元素 <code>"0"</code>＝全切、<code>"1"</code>＝半切（均切纸）；<code>text</code> cont 数组多行；<code>title</code> 不再加粗；<code>line_space</code> 改为点数（8 点＝1 mm）；<code>png</code> 上限 60K、<code>bmp</code> 上限 6K</td></tr>
+    <tr><td>v1.18</td><td>2026-08-26</td><td>物联网平台设备获取落地：设置页「获取设备信息」按硬件指纹（主板序列号／CPU ID／系统盘序列号）向 web 管理端查询自由打印SN（仅回填 <code>DeviceName</code>／<code>ProductKey</code>／<code>DeviceSecret</code> 与设备源地址，不产生绑定），已绑定锁定恢复、不可切换；点「保存设置」生效后才上报管理端绑定确认（幂等兼心跳）；新增「设备源地址」设置项</td></tr>
   </table>
 
   <footer>
-    聪明付票据打印服务器 接口文档 v1.17 · 本页由本服务内置只读文档服务提供，与《接口文档.md》内容保持同步。
+    聪明付票据打印服务器 接口文档 v1.18 · 本页由本服务内置只读文档服务提供，与《接口文档.md》内容保持同步。
   </footer>
 
 </div>
